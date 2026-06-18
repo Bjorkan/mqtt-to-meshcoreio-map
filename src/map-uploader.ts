@@ -465,6 +465,10 @@ function formatMapApiSuccessLog(context: AdvertLogContext, response: MapApiRespo
   return `Meshcore.io accepted advert for ${context.advertLabel}${detail ? `: ${detail}` : "."}`;
 }
 
+function formatSeconds(seconds: number): string {
+  return `${Math.max(0, Math.floor(seconds))}s`;
+}
+
 export class MeshcoreMapUploader {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
@@ -594,6 +598,7 @@ export class MeshcoreMapUploader {
     };
 
     if (!UPLOADABLE_ADVERT_TYPES.has(advertType)) {
+      logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} has type ${advertType}. Dropping.`);
       return;
     }
 
@@ -601,10 +606,12 @@ export class MeshcoreMapUploader {
     const previousTimestamp = this.seenAdverts.get(pubKey);
     if (previousTimestamp !== undefined) {
       if (previousTimestamp >= advert.timestamp) {
+        logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} was already heard at timestamp ${previousTimestamp}. Dropping.`);
         return;
       }
 
       if (advert.timestamp < previousTimestamp + this.config.minReuploadIntervalSeconds) {
+        logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is ${formatSeconds(advert.timestamp - previousTimestamp)} newer than the last upload; minimum reupload interval is ${formatSeconds(this.config.minReuploadIntervalSeconds)}. Dropping.`);
         return;
       }
     }
@@ -633,6 +640,7 @@ export class MeshcoreMapUploader {
     const { advert, advertKey, candidate, logContext, observer, pubKey } = input;
 
     if (!(await advert.isVerified())) {
+      warnMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} failed signature verification. Dropping.`);
       return;
     }
 
@@ -645,24 +653,29 @@ export class MeshcoreMapUploader {
     try {
       const params = buildUploadParams(observer?.params ?? {});
       if (this.config.requireCompleteRadioParams && !hasValidParams(params)) {
+        warnMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is missing valid observer radio parameters. Dropping.`);
         return;
       }
 
       const now = this.now();
       if (this.isGlobalRetryCoolingDown(now)) {
+        warnMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} skipped because map API uploads are cooling down after a recent failure. Dropping.`);
         return;
       }
 
       if (this.isAdvertTimestampBlocked(pubKey, advert.timestamp)) {
+        logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is blocked by a recently uploaded advert for this node. Dropping.`);
         return;
       }
 
       const lastAttempt = this.lastAttemptByAdvert.get(advertKey);
       if (lastAttempt !== undefined && now - lastAttempt < this.config.retryCooldownMs) {
+        warnMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is still in retry cooldown after a failed upload attempt. Dropping.`);
         return;
       }
 
       if (!this.reserveAdvertTimestamp(pubKey, advert.timestamp)) {
+        logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} conflicts with another queued or active advert for this node. Dropping.`);
         return;
       }
       this.lastAttemptByAdvert.set(advertKey, now);

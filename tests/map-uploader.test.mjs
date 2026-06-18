@@ -124,6 +124,26 @@ async function captureConsoleLog(fn) {
   return lines;
 }
 
+async function captureConsoleOutput(fn) {
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  const lines = [];
+  const capture = (...args) => {
+    lines.push(stripAnsi(args.join(' ')));
+  };
+  console.log = capture;
+  console.warn = capture;
+
+  try {
+    await fn();
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+  }
+
+  return lines;
+}
+
 test('uploads verified packets.raw adverts with firmware radio parameters', async () => {
   const { fetch, requests } = makeFetch();
   const signingIdentity = createMapUploadSigningIdentity();
@@ -671,30 +691,48 @@ test('skips adverts until observer radio parameters are complete', async () => {
   const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
   const packet = makeAdvertPacket({});
 
-  await uploader.processMqttMessage(
-    'meshcore/STO/observer-key/raw',
-    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(packet) }))
-  );
+  const logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage(
+      'meshcore/STO/observer-key/raw',
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(packet) }))
+    );
+  });
 
   assert.equal(requests.length, 0);
+  assert.match(
+    logs.at(-1),
+    /Advert for SE-STO-TEST \([0-9a-f]{6}\) received by a1a1a1 is missing valid observer radio parameters\. Dropping\./
+  );
 });
 
 test('skips chat, none, and invalid-signature adverts', async () => {
-  for (const packet of [
-    makeAdvertPacket({ type: advertTypes.chat }),
-    makeAdvertPacket({ type: advertTypes.none }),
-    makeAdvertPacket({ tamperSignature: true }),
+  for (const [packet, expected] of [
+    [
+      makeAdvertPacket({ type: advertTypes.chat }),
+      /Advert for SE-STO-TEST \([0-9a-f]{6}\) received by SE-STO-OBSERVER has type CHAT\. Dropping\./,
+    ],
+    [
+      makeAdvertPacket({ type: advertTypes.none }),
+      /Advert for SE-STO-TEST \([0-9a-f]{6}\) received by SE-STO-OBSERVER has type NONE\. Dropping\./,
+    ],
+    [
+      makeAdvertPacket({ tamperSignature: true }),
+      /Advert for SE-STO-TEST \([0-9a-f]{6}\) received by SE-STO-OBSERVER failed signature verification\. Dropping\./,
+    ],
   ]) {
     const { fetch, requests } = makeFetch();
     const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
     await rememberDefaultStatus(uploader);
 
-    await uploader.processMqttMessage(
-      'meshcore/STO/observer-key/raw',
-      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(packet) }))
-    );
+    const logs = await captureConsoleOutput(async () => {
+      await uploader.processMqttMessage(
+        'meshcore/STO/observer-key/raw',
+        Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(packet) }))
+      );
+    });
 
     assert.equal(requests.length, 0);
+    assert.match(logs.at(-1), expected);
   }
 });
 
@@ -727,19 +765,25 @@ test('applies replay, reupload interval, and retry cooldown', async () => {
 
   const first = makeAdvertPacket({ timestamp: 1_800_000_000 });
   await uploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(first) })));
-  await uploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(first) })));
+  let logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(first) })));
+  });
   assert.equal(requests.length, 1);
+  assert.match(logs.at(-1), /was already heard at timestamp 1800000000\. Dropping\./);
 
   const tooSoon = makeAdvertPacket({ timestamp: 1_800_000_100 });
-  await uploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(tooSoon) })));
+  logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(tooSoon) })));
+  });
   assert.equal(requests.length, 1);
+  assert.match(logs.at(-1), /is 100s newer than the last upload; minimum reupload interval is 3600s\. Dropping\./);
 
   const later = makeAdvertPacket({ timestamp: 1_800_003_700 });
   await uploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(later) })));
   assert.equal(requests.length, 2);
 
   const failing = makeFetch({ ok: false, status: 500, text: 'nope' });
-  const retryUploader = new MeshcoreMapUploader(makeConfig({ retryCooldownMs: 300000 }), {
+  const retryUploader = new MeshcoreMapUploader(makeConfig({ retryCooldownMs: 300000, globalRetryCooldownMs: 0 }), {
     fetch: failing.fetch,
     now: () => now,
   });
@@ -750,8 +794,11 @@ test('applies replay, reupload interval, and retry cooldown', async () => {
     retryUploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(retryPacket) }))),
     /meshcore\.io responded 500 for SE-STO-TEST \([0-9a-f]{6}\): nope/
   );
-  await retryUploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(retryPacket) })));
+  logs = await captureConsoleOutput(async () => {
+    await retryUploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(retryPacket) })));
+  });
   assert.equal(failing.requests.length, 1);
+  assert.match(logs.at(-1), /is still in retry cooldown after a failed upload attempt\. Dropping\./);
 
   now += 300001;
   await assert.rejects(
@@ -894,11 +941,14 @@ test('applies global retry cooldown after map API failures', async () => {
     /meshcore\.io responded 503/
   );
 
-  await uploader.processMqttMessage(
-    `meshcore/STO/${OBSERVER_ID}/raw`,
-    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_303_700 })) }))
-  );
+  const logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_303_700 })) }))
+    );
+  });
   assert.equal(failing.requests.length, 1);
+  assert.match(logs.at(-1), /skipped because map API uploads are cooling down after a recent failure\. Dropping\./);
 
   now += 60001;
   await assert.rejects(
