@@ -1,4 +1,4 @@
-FROM node:24.16.0-bookworm-slim AS build
+FROM node:26.3.0-bookworm-slim AS build
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
-FROM node:24.16.0-bookworm-slim
+FROM node:26.3.0-bookworm-slim
 
 ENV NODE_ENV=production
 WORKDIR /app
