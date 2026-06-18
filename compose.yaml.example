@@ -1,0 +1,23 @@
+services:
+  mqtt-to-meshcoreio-map:
+    image: ghcr.io/bjorkan/mqtt-to-meshcoreio-map:latest
+    container_name: mqtt-to-meshcoreio-map
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Prefer a broker DNS name, host IP, or another Compose service name.
+      # Inside a container, localhost means this container, not the Docker host.
+      SOURCE_MQTT_URL: mqtt://mqtt.example.com:1883
+      LOG_COLOR: "false"
+      MESHCOREIO_MAX_CONCURRENT_UPLOADS: "1"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

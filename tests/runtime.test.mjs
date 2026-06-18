@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
 
-import { loadConfig, startRuntime } from "../dist/index.js";
+import { loadConfig, redactUrlCredentials, startRuntime } from "../dist/index.js";
 
 class FakeMqttClient extends EventEmitter {
   constructor(url, options) {
@@ -10,16 +10,19 @@ class FakeMqttClient extends EventEmitter {
     this.url = url;
     this.options = options;
     this.subscriptions = [];
+    this.subscribeErrors = [];
     this.ended = false;
+    this.endForce = undefined;
   }
 
   subscribe(topic, options, callback) {
     this.subscriptions.push({ topic, options });
-    callback?.(null, [{ topic, qos: options?.qos ?? 0 }]);
+    callback?.(this.subscribeErrors.shift() ?? null, [{ topic, qos: options?.qos ?? 0 }]);
   }
 
-  end(_force, _options, callback) {
+  end(force, _options, callback) {
     this.ended = true;
+    this.endForce = force;
     callback?.();
   }
 
@@ -29,6 +32,10 @@ class FakeMqttClient extends EventEmitter {
 
   receive(topic, payload) {
     this.emit("message", topic, Buffer.from(payload));
+  }
+
+  goOffline() {
+    this.emit("offline");
   }
 }
 
@@ -48,6 +55,9 @@ function makeConfig(overrides = {}) {
       minReuploadIntervalSeconds: 3600,
       requestTimeoutMs: 10000,
       retryCooldownMs: 300000,
+      globalRetryCooldownMs: 60000,
+      maxConcurrentUploads: 2,
+      maxQueuedUploads: 200,
       requireCompleteRadioParams: true,
     },
     ...overrides,
@@ -70,6 +80,8 @@ test("loads runtime configuration from environment with production defaults", ()
     TOPIC_FILTER: "custom/#",
     SOURCE_REJECT_UNAUTHORIZED: "false",
     MESHCOREIO_API_URL: "https://map.example/api",
+    MESHCOREIO_MAX_CONCURRENT_UPLOADS: "4",
+    MESHCOREIO_MAX_QUEUED_UPLOADS: "50",
   });
 
   assert.equal(configured.sourceUrl, "mqtts://broker.example:8883");
@@ -79,6 +91,35 @@ test("loads runtime configuration from environment with production defaults", ()
   assert.equal(configured.topicFilter, "custom/#");
   assert.equal(configured.rejectUnauthorized, false);
   assert.equal(configured.mapUploader.apiUrl, "https://map.example/api");
+  assert.equal(configured.mapUploader.maxConcurrentUploads, 4);
+  assert.equal(configured.mapUploader.maxQueuedUploads, 50);
+});
+
+test("falls back for invalid numeric environment values", () => {
+  const configured = loadConfig({
+    MQTT_RECONNECT_PERIOD_MS: "-1",
+    MQTT_CONNECT_TIMEOUT_MS: "0",
+    MESHCOREIO_REQUEST_TIMEOUT_MS: "999999999",
+    MESHCOREIO_MAX_CONCURRENT_UPLOADS: "0",
+    MESHCOREIO_MAX_QUEUED_UPLOADS: "-5",
+  });
+
+  assert.equal(configured.reconnectPeriodMs, 5000);
+  assert.equal(configured.connectTimeoutMs, 30000);
+  assert.equal(configured.mapUploader.requestTimeoutMs, 10000);
+  assert.equal(configured.mapUploader.maxConcurrentUploads, 2);
+  assert.equal(configured.mapUploader.maxQueuedUploads, 200);
+});
+
+test("redacts credentials from source MQTT URLs before logging", () => {
+  assert.equal(
+    redactUrlCredentials("mqtts://user:secret@example.com:8883/path"),
+    "mqtts://redacted:redacted@example.com:8883/path"
+  );
+  assert.equal(
+    redactUrlCredentials("mqtt://token@example.com"),
+    "mqtt://redacted@example.com"
+  );
 });
 
 test("subscribes to the configured MQTT source filter", async () => {
@@ -104,6 +145,61 @@ test("subscribes to the configured MQTT source filter", async () => {
 
   await runtime.stop();
   assert.equal(source.ended, true);
+  assert.equal(source.endForce, true);
+});
+
+test("reports the first subscribe failure while allowing a later reconnect to subscribe", async () => {
+  const clients = [];
+  const runtime = startRuntime(makeConfig(), {
+    connect(url, options) {
+      const client = new FakeMqttClient(url, options);
+      client.subscribeErrors.push(new Error("subscribe failed"));
+      clients.push(client);
+      return client;
+    },
+    mapUploader: {
+      handleMqttMessage() {},
+    },
+  });
+
+  const source = clients[0];
+  source.connectNow();
+  await assert.rejects(runtime.sourceFirstSubscribeAttempt, /subscribe failed/);
+
+  source.connectNow();
+  await runtime.sourceSubscribed;
+  assert.equal(source.subscriptions.length, 2);
+
+  await runtime.stop();
+});
+
+test("logs MQTT offline events", async () => {
+  const clients = [];
+  const runtime = startRuntime(makeConfig(), {
+    connect(url, options) {
+      const client = new FakeMqttClient(url, options);
+      clients.push(client);
+      return client;
+    },
+    mapUploader: {
+      handleMqttMessage() {},
+    },
+  });
+
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => {
+    warnings.push(args.join(" "));
+  };
+
+  try {
+    clients[0].goOffline();
+  } finally {
+    console.warn = originalWarn;
+    await runtime.stop();
+  }
+
+  assert.match(warnings.join("\n"), /MQTT source is offline/);
 });
 
 test("passes MQTT source messages to the map uploader", async () => {

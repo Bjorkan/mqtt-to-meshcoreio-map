@@ -5,6 +5,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 
 import {
   createMapUploadSigningIdentity,
+  formatMapUploadLogLine,
   formatMapUploadLogPrefix,
   MeshcoreMapUploader,
 } from '../dist/map-uploader.js';
@@ -38,6 +39,9 @@ function makeConfig(overrides = {}) {
     minReuploadIntervalSeconds: 3600,
     requestTimeoutMs: 10000,
     retryCooldownMs: 300000,
+    globalRetryCooldownMs: 60000,
+    maxConcurrentUploads: 2,
+    maxQueuedUploads: 200,
     requireCompleteRadioParams: true,
     ...overrides,
   };
@@ -178,6 +182,22 @@ test('colorizes only map upload log prefix contents', () => {
       delete process.env.LOG_COLOR;
     } else {
       process.env.LOG_COLOR = originalLogColor;
+    }
+  }
+});
+
+test('sanitizes control characters in map upload log lines', () => {
+  const originalNoColor = process.env.NO_COLOR;
+  process.env.NO_COLOR = '1';
+
+  try {
+    const line = formatMapUploadLogLine('bad\nnode\x1b[31m', new Date('2026-06-17T19:14:03.245Z'));
+    assert.equal(line, '[Map upload 21:14] bad\\x0anode\\x1b[31m');
+  } finally {
+    if (originalNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = originalNoColor;
     }
   }
 });
@@ -334,6 +354,31 @@ test('normalizes direct frequency fields from MHz, kHz, and Hz', async () => {
   }
 });
 
+test('normalizes comma radio strings from Hz and Hz bandwidth', async () => {
+  const { fetch, requests } = makeFetch();
+  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  await uploader.processMqttMessage(
+    'meshcore/STO/observer-key/status',
+    statusPayload({ radio: '869617981,62500,8,8' })
+  );
+
+  await uploader.processMqttMessage(
+    'meshcore/STO/observer-key/raw',
+    Buffer.from(JSON.stringify({
+      origin_id: OBSERVER_ID,
+      data: hex(makeAdvertPacket({ timestamp: 1_800_011_000 })),
+    }))
+  );
+
+  assert.equal(requests.length, 1);
+  assert.deepEqual(signedRequestData(requests).params, {
+    freq: 869.618,
+    bw: 62.5,
+    sf: 8,
+    cr: 8,
+  });
+});
+
 test('uses 64-hex observer id from standard, meshrank, and custom topics when payload omits origin_id', async () => {
   for (const topic of [
     `meshcore/STO/${OBSERVER_ID}/raw`,
@@ -389,7 +434,7 @@ test('skips custom topic packets without payload origin_id or 64-hex topic id', 
   assert.equal(requests.length, 0);
 });
 
-test('does not keep stale radio params after a later complete but invalid status', async () => {
+test('keeps the latest valid radio params when a later complete status is invalid', async () => {
   const { fetch, requests } = makeFetch();
   const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
 
@@ -399,7 +444,7 @@ test('does not keep stale radio params after a later complete but invalid status
   );
   await uploader.processMqttMessage(
     `meshcore/STO/${OBSERVER_ID}/status`,
-    statusPayload({ radio: '999999,62.5,8,8' })
+    statusPayload({ radio: '1001000000,62.5,8,8' })
   );
 
   await uploader.processMqttMessage(
@@ -410,7 +455,13 @@ test('does not keep stale radio params after a later complete but invalid status
     }))
   );
 
-  assert.equal(requests.length, 0);
+  assert.equal(requests.length, 1);
+  assert.deepEqual(signedRequestData(requests).params, {
+    freq: 869.618,
+    bw: 62.5,
+    sf: 8,
+    cr: 8,
+  });
 });
 
 test('keeps previous valid radio params when later status is offline or incomplete', async () => {
@@ -435,6 +486,56 @@ test('keeps previous valid radio params when later status is offline or incomple
     sf: 8,
     cr: 8,
   });
+});
+
+test('replaces previous observer radio params when a newer valid status arrives', async () => {
+  const { fetch, requests } = makeFetch();
+  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+
+  await rememberDefaultStatus(uploader);
+  await uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/status`,
+    statusPayload({ radio: '868.100,125,7,5' })
+  );
+
+  await uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({
+      origin_id: OBSERVER_ID,
+      data: hex(makeAdvertPacket({ timestamp: 1_800_065_000 })),
+    }))
+  );
+
+  assert.equal(requests.length, 1);
+  assert.deepEqual(signedRequestData(requests).params, {
+    freq: 868.1,
+    bw: 125,
+    sf: 7,
+    cr: 5,
+  });
+});
+
+test('drops observer radio status after 24 hours without a new valid status', async () => {
+  const { fetch, requests } = makeFetch();
+  let now = 1_000_000;
+  const uploader = new MeshcoreMapUploader(makeConfig(), {
+    fetch,
+    now: () => now,
+  });
+
+  await rememberDefaultStatus(uploader);
+  now += 24 * 60 * 60 * 1000 + 1;
+
+  await uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/status`,
+    Buffer.from(JSON.stringify({ status: 'offline', origin_id: OBSERVER_ID }))
+  );
+  await uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_070_000 })) }))
+  );
+
+  assert.equal(requests.length, 0);
 });
 
 test('prefers packet raw over data and raw topic data over raw field', async () => {
@@ -656,6 +757,156 @@ test('applies replay, reupload interval, and retry cooldown', async () => {
   await assert.rejects(
     retryUploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(retryPacket) }))),
     /meshcore\.io responded 500 for SE-STO-TEST \([0-9a-f]{6}\): nope/
+  );
+  assert.equal(failing.requests.length, 2);
+});
+
+test('limits concurrent map uploads and queues the rest', async () => {
+  let active = 0;
+  let peak = 0;
+  const releases = [];
+  const requests = [];
+  const uploader = new MeshcoreMapUploader(makeConfig({
+    maxConcurrentUploads: 1,
+    maxQueuedUploads: 5,
+  }), {
+    fetch: async (url, init) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      requests.push({ url, init });
+      await new Promise((resolve) => releases.push(resolve));
+      active -= 1;
+      return { ok: true, status: 200, text: async () => '{"ok":true}' };
+    },
+  });
+  await rememberDefaultStatus(uploader);
+
+  const first = uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_200_000 })) }))
+  );
+  const second = uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_203_700 })) }))
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+  assert.equal(peak, 1);
+
+  releases.shift()();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 2);
+  assert.equal(peak, 1);
+
+  releases.shift()();
+  await Promise.all([first, second]);
+});
+
+test('prevents concurrent uploads inside the same node reupload interval', async () => {
+  const releases = [];
+  const requests = [];
+  const uploader = new MeshcoreMapUploader(makeConfig({
+    maxConcurrentUploads: 2,
+    minReuploadIntervalSeconds: 3600,
+  }), {
+    fetch: async (url, init) => {
+      requests.push({ url, init });
+      await new Promise((resolve) => releases.push(resolve));
+      return { ok: true, status: 200, text: async () => '{"ok":true}' };
+    },
+  });
+  await rememberDefaultStatus(uploader);
+
+  const first = uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_500_000 })) }))
+  );
+  const tooSoon = uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_500_100 })) }))
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+
+  releases.shift()();
+  await Promise.all([first, tooSoon]);
+  assert.equal(requests.length, 1);
+});
+
+test('skips an older queued advert after a newer advert was uploaded', async () => {
+  let releaseFetch;
+  const requests = [];
+  const newerPacket = makeAdvertPacket({ timestamp: 1_800_403_700 });
+  const olderPacket = makeAdvertPacket({ timestamp: 1_800_400_000 });
+  const uploader = new MeshcoreMapUploader(makeConfig({
+    maxConcurrentUploads: 1,
+    maxQueuedUploads: 5,
+    minReuploadIntervalSeconds: 0,
+  }), {
+    fetch: async (url, init) => {
+      requests.push({ url, init });
+      await new Promise((resolve) => {
+        releaseFetch = resolve;
+      });
+      return { ok: true, status: 200, text: async () => '{"ok":true}' };
+    },
+  });
+  await rememberDefaultStatus(uploader);
+
+  const newer = uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(newerPacket) }))
+  );
+  const older = uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(olderPacket) }))
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+
+  releaseFetch();
+  await Promise.all([newer, older]);
+
+  assert.equal(requests.length, 1);
+  assert.deepEqual(signedRequestData(requests).links, [`meshcore://${hex(newerPacket)}`]);
+});
+
+test('applies global retry cooldown after map API failures', async () => {
+  let now = 10_000;
+  const failing = makeFetch({ ok: false, status: 503, text: 'down' });
+  const uploader = new MeshcoreMapUploader(makeConfig({
+    globalRetryCooldownMs: 60000,
+    retryCooldownMs: 0,
+  }), {
+    fetch: failing.fetch,
+    now: () => now,
+  });
+  await rememberDefaultStatus(uploader);
+
+  await assert.rejects(
+    uploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_300_000 })) }))
+    ),
+    /meshcore\.io responded 503/
+  );
+
+  await uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_303_700 })) }))
+  );
+  assert.equal(failing.requests.length, 1);
+
+  now += 60001;
+  await assert.rejects(
+    uploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_307_400 })) }))
+    ),
+    /meshcore\.io responded 503/
   );
   assert.equal(failing.requests.length, 2);
 });

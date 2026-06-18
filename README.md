@@ -1,8 +1,10 @@
-# MQTT to MeshCore.io Map
+# MQTT to MeshCore.io Map Bridge
 
-Standalone Docker service that listens to a MeshCore MQTT broker and uploads verified MeshCore adverts to the MeshCore.io map.
+> Warning: This software was built with heavy use of GPT-5.5. Use it at your own risk. Forks and rewrites without the help of a "clanker" are completely welcome.
 
-The map upload logic is extracted from `Bjorkan/meshcore-mqtt-broker` and kept focused on the MeshCore.io map flow only. This service does not run an MQTT broker and does not forward messages to another MQTT broker.
+MQTT to MeshCore.io Map bridge that listens to a MeshCore MQTT broker and uploads verified MeshCore adverts to the MeshCore.io map.
+
+The service consumes MQTT observer messages, validates MeshCore packet data, signs accepted map uploads, and posts them to MeshCore.io. It does not run an MQTT broker and does not forward messages to another MQTT broker.
 
 ## What It Does
 
@@ -28,138 +30,70 @@ TOPIC_FILTER=meshcore/#
 
 The service creates a fresh MeshCore.io signing identity every time it starts. The public key is written to the logs so you can see which uploader identity is being used for that run. The private key is generated in memory only and is not logged.
 
-The MQTT messages should include:
+The MQTT source should publish observer `status` messages and MeshCore packet messages on `raw` or `packets` topics. For the expected message formats, conversion flow, signing details, and MeshCore.io request shape, see [TECHNICAL.md](TECHNICAL.md).
 
-- `status` payloads with `origin_id` and radio parameters: `freq`, `bw`, `sf`, and `cr`, or a compatible `radio` string.
-- `packets` payloads with `raw`, or `raw` payloads with `data`.
+Important runtime settings:
 
-The packet hex must be the original MeshCore packet wire bytes accepted by `Packet.fromBytes(...)`.
+- `MESHCOREIO_MAX_CONCURRENT_UPLOADS`: maximum number of simultaneous advert verification/upload tasks. Default: `2`.
+- `MESHCOREIO_MAX_QUEUED_UPLOADS`: maximum number of queued upload tasks waiting for a concurrency slot. Default: `200`.
+- `MESHCOREIO_GLOBAL_RETRY_COOLDOWN_MS`: global cooldown after a MeshCore.io HTTP failure or timeout. Default: `60000`.
+- `MESHCOREIO_RETRY_COOLDOWN_MS`: per-advert retry cooldown. Default: `300000`.
+- `MESHCOREIO_REQUEST_TIMEOUT_MS`: HTTP timeout for MeshCore.io requests. Default: `10000`.
+- `MESHCOREIO_MIN_REUPLOAD_SECONDS`: minimum accepted advert timestamp gap per advertised node. Default: `3600`.
 
-## MQTT Input Contract
+Numeric environment variables are range-checked. Invalid, negative, zero-where-not-allowed, or unreasonably large values fall back to safe defaults.
 
-The service receives MQTT messages through the configured `TOPIC_FILTER`, usually `meshcore/#`. The message type is read from any topic segment named `status`, `raw`, or `packets`.
+## Deployment
 
-The normal observer topic format is:
+The recommended deployment path is Docker Compose.
 
-```text
-meshcore/{REGION}/{OBSERVER_PUBLIC_KEY}/{type}
-```
-
-Examples:
-
-```text
-meshcore/STO/a1a1...a1/status
-meshcore/STO/a1a1...a1/packets
-meshcore/STO/a1a1...a1/raw
-```
-
-Custom topic layouts also work when either:
-
-- the JSON payload contains a valid `origin_id`, or
-- the topic contains a 64-character hex observer public key segment.
-
-### Status Messages
-
-`status` messages are JSON and are used to remember radio parameters for the observer that heard later packets. They are not uploaded to MeshCore.io directly.
-
-Example:
-
-```json
-{
-  "origin": "SE-STO-OBSERVER",
-  "origin_id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
-  "radio": "869.617981,62.5,8,8"
-}
-```
-
-The radio settings can also be provided as direct fields:
-
-```json
-{
-  "origin_id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
-  "params": {
-    "freq": 869.617981,
-    "bw": 62.5,
-    "sf": 8,
-    "cr": 8
-  }
-}
-```
-
-Frequency may arrive as MHz, kHz, or Hz. Bandwidth may arrive as kHz or Hz. The uploader normalizes these to MHz and kHz before sending to MeshCore.io.
-
-### Packet Messages
-
-`packets` and `raw` messages carry the original MeshCore packet bytes as hex. The service accepts JSON payloads and plain hex strings.
-
-For `packets`, the preferred field order is `raw`, `packet`, `payload`, then `data`:
-
-```json
-{
-  "origin_id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
-  "type": "PACKET",
-  "raw": "0100..."
-}
-```
-
-For `raw`, the preferred field order is `data`, `raw`, `packet`, then `payload`:
-
-```json
-{
-  "origin_id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
-  "type": "RAW",
-  "data": "0100..."
-}
-```
-
-The hex value must be even-length packet wire bytes, not a wrapper object, modem header, or MQTT envelope.
-
-## MeshCore.io API Output
-
-When an uploadable advert is found, the service posts to:
-
-```text
-https://map.meshcore.io/api/v1/uploader/node
-```
-
-The request body is signed and has this shape:
-
-```json
-{
-  "data": "{\"params\":{\"freq\":869.618,\"bw\":62.5,\"sf\":8,\"cr\":8},\"links\":[\"meshcore://0100...\"]}",
-  "signature": "128 hex chars",
-  "publicKey": "64 hex chars"
-}
-```
-
-`data` is a JSON string, not a nested JSON object. The `signature` is an Ed25519 signature over the SHA-256 hash of that string. The `publicKey` is the generated ephemeral upload public key for the current service run.
-
-## Conversion Flow
-
-1. Connect to the source MQTT broker and subscribe to `TOPIC_FILTER`.
-2. For every MQTT message, inspect the topic to decide whether it is `status`, `raw`, or `packets`.
-3. Store valid `status` radio parameters by observer public key.
-4. Extract packet hex from `raw` or `packets` payloads and find the observer public key from `origin_id` or the topic.
-5. Parse the packet with `Packet.fromBytes(...)`.
-6. Continue only if the packet payload is a MeshCore `ADVERT`.
-7. Parse the advert, verify its signature, and keep only `REPEATER`, `ROOM`, and `SENSOR` adverts.
-8. Skip stale adverts, duplicate in-flight adverts, too-frequent reuploads, and adverts without complete valid radio parameters.
-9. Build MeshCore.io upload data with normalized radio params and a `meshcore://...` link containing the original packet bytes.
-10. Sign the upload with the in-memory ephemeral private key.
-11. POST the signed request to MeshCore.io and log the API result.
-
-## Docker
+Copy the example files:
 
 ```bash
-docker build -t mqtt-to-meshcoreio-map .
-docker run --env-file .env mqtt-to-meshcoreio-map
+cp compose.yaml.example compose.yaml
+cp .env.example .env
 ```
 
-Published images are pushed only to GitHub Container Registry:
+Edit `.env` and set the correct MQTT broker information:
+
+```env
+SOURCE_MQTT_URL=mqtt://your-broker:1883
+SOURCE_MQTT_USERNAME=
+SOURCE_MQTT_PASSWORD=
+TOPIC_FILTER=meshcore/#
+```
+
+`SOURCE_MQTT_URL` is passed to MQTT.js and can use standard MQTT URL schemes:
+
+```env
+SOURCE_MQTT_URL=mqtt://your-broker:1883
+SOURCE_MQTT_URL=mqtts://your-broker:8883
+SOURCE_MQTT_URL=ws://your-broker:8083/mqtt
+SOURCE_MQTT_URL=wss://your-broker:8084/mqtt
+```
+
+Keep `SOURCE_REJECT_UNAUTHORIZED=true` for normal `mqtts://` and `wss://` deployments. Set it to `false` only for local tests with self-signed certificates.
+
+If the MQTT broker runs in the same Compose stack, set `SOURCE_MQTT_URL` to that service name. If it runs elsewhere, use its DNS name or reachable host IP. Inside a container, `localhost` means the container itself, not the Docker host.
+
+Start the bridge:
 
 ```bash
-docker pull ghcr.io/<owner>/<repo>:latest
-docker run --env-file .env ghcr.io/<owner>/<repo>:latest
+docker compose up -d
+```
+
+The Compose example uses the published GitHub Container Registry image, sets `LOG_COLOR=false`, enables log rotation, applies basic container hardening, and uses a conservative first-release `MESHCOREIO_MAX_CONCURRENT_UPLOADS=1`.
+
+For testing, the published image can also be run directly with the MQTT settings in the command:
+
+```bash
+docker run --rm \
+  -e SOURCE_MQTT_URL=mqtt://your-broker:1883 \
+  -e SOURCE_MQTT_USERNAME= \
+  -e SOURCE_MQTT_PASSWORD= \
+  -e SOURCE_REJECT_UNAUTHORIZED=true \
+  -e TOPIC_FILTER=meshcore/# \
+  ghcr.io/bjorkan/mqtt-to-meshcoreio-map:latest
 ```
 
 ## Development
@@ -168,4 +102,5 @@ docker run --env-file .env ghcr.io/<owner>/<repo>:latest
 npm install
 npm run build
 npm test
+docker build -t mqtt-to-meshcoreio-map .
 ```

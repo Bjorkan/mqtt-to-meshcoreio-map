@@ -8,6 +8,9 @@ export interface MapUploaderConfig {
   minReuploadIntervalSeconds: number;
   requestTimeoutMs: number;
   retryCooldownMs: number;
+  globalRetryCooldownMs: number;
+  maxConcurrentUploads: number;
+  maxQueuedUploads: number;
   requireCompleteRadioParams: boolean;
 }
 
@@ -32,10 +35,6 @@ interface RadioParams {
 interface ObserverState {
   origin?: string;
   originId?: string;
-  model?: string;
-  firmwareVersion?: string;
-  clientVersion?: string;
-  radio?: string;
   params: RadioParams;
   updatedAt: number;
 }
@@ -75,6 +74,7 @@ const UPLOADABLE_ADVERT_TYPES = new Set(["REPEATER", "ROOM", "SENSOR"]);
 const MAX_MQTT_PAYLOAD_BYTES = 16 * 1024;
 const MAX_PACKET_HEX_CHARS = 1024;
 const MAX_LOG_BODY_CHARS = 500;
+const MAX_LOG_VALUE_CHARS = 240;
 const OBSERVER_TTL_MS = 24 * 60 * 60 * 1000;
 const SEEN_ADVERT_TTL_SECONDS = 72 * 60 * 60;
 const MAP_UPLOAD_LOG_COLOR = "\x1b[36m";
@@ -136,8 +136,8 @@ function parseRadioString(radio: string | undefined): RadioParams {
   );
   if (commaSeparated) {
     return {
-      freq: Number(commaSeparated[1]),
-      bw: Number(commaSeparated[2]),
+      freq: normalizeFrequencyToMHz(Number(commaSeparated[1])),
+      bw: normalizeBandwidthToKHz(Number(commaSeparated[2])),
       sf: Number(commaSeparated[3]),
       cr: Number(commaSeparated[4]),
     };
@@ -330,6 +330,15 @@ function trimLogBody(value: string): string {
     : value;
 }
 
+function sanitizeLogText(value: string, maxLength = MAX_LOG_VALUE_CHARS): string {
+  const cleaned = value.replace(/[\x00-\x1f\x7f]/g, (char) => {
+    const code = char.charCodeAt(0).toString(16).padStart(2, "0");
+    return `\\x${code}`;
+  });
+
+  return cleaned.length > maxLength ? `${cleaned.slice(0, maxLength)}...` : cleaned;
+}
+
 function shouldColorizeLogs(): boolean {
   return process.env.NO_COLOR === undefined && process.env.LOG_COLOR !== "false";
 }
@@ -393,7 +402,7 @@ export function colorizeMapUploadLogLine(message: string): string {
 }
 
 export function formatMapUploadLogLine(message: string, date = new Date()): string {
-  return colorizeMapUploadLogLine(`${rawMapUploadLogPrefix(date)} ${message}`);
+  return colorizeMapUploadLogLine(`${rawMapUploadLogPrefix(date)} ${sanitizeLogText(message, MAX_LOG_BODY_CHARS)}`);
 }
 
 function logMapUpload(message: string): void {
@@ -417,11 +426,11 @@ function shortPublicKey(publicKeyHex: string): string {
 }
 
 function formatAdvertLabel(nodeName: string, publicKeyHex: string): string {
-  return `${nodeName} (${shortPublicKey(publicKeyHex)})`;
+  return `${sanitizeLogText(nodeName, 80)} (${shortPublicKey(publicKeyHex)})`;
 }
 
 function formatObserverLabel(observer: ObserverState | undefined, observerId: string | undefined): string {
-  return observer?.origin ?? (observerId ? shortPublicKey(observerId) : "unknown observer");
+  return observer?.origin ? sanitizeLogText(observer.origin, 80) : (observerId ? shortPublicKey(observerId) : "unknown observer");
 }
 
 function parseMapApiResponse(text: string): MapApiResponseBody | undefined {
@@ -463,9 +472,13 @@ export class MeshcoreMapUploader {
   private readonly publicKeyHex: string;
   private readonly privateSeed: Buffer;
   private readonly inFlightAdverts = new Set<string>();
+  private readonly reservedAdvertTimestamps = new Map<string, number>();
   private readonly lastAttemptByAdvert = new Map<string, number>();
   private readonly seenAdverts = new Map<string, number>();
   private readonly observers = new Map<string, ObserverState>();
+  private readonly uploadQueue: Array<() => void> = [];
+  private activeUploads = 0;
+  private lastGlobalFailureAt = 0;
   readonly ready: Promise<void>;
 
   constructor(
@@ -528,52 +541,23 @@ export class MeshcoreMapUploader {
       return;
     }
 
-    const previous = this.observers.get(originId);
     const parsedParams = parseRadioParams(data);
     const parsedComplete = hasCompleteParams(parsedParams);
     const parsedValid = hasValidParams(parsedParams);
-    const status = readString(data.status)?.toLowerCase();
-    if (status === "offline" && !parsedValid && previous) {
-      this.observers.set(originId, {
-        ...previous,
-        origin: readString(data.origin) ?? previous.origin,
-        model: readString(data.model) ?? previous.model,
-        firmwareVersion: readString(data.firmware_version) ?? previous.firmwareVersion,
-        clientVersion: readString(data.client_version) ?? previous.clientVersion,
-        radio: readString(data.radio) ?? previous.radio,
-      });
-      return;
-    }
 
     if (parsedComplete && !parsedValid) {
-      const state: ObserverState = {
-        origin: readString(data.origin) ?? previous?.origin,
-        originId,
-        model: readString(data.model) ?? previous?.model,
-        firmwareVersion: readString(data.firmware_version) ?? previous?.firmwareVersion,
-        clientVersion: readString(data.client_version) ?? previous?.clientVersion,
-        radio: readString(data.radio) ?? previous?.radio,
-        params: parsedParams,
-        updatedAt: this.now(),
-      };
-
-      this.observers.set(originId, state);
-      warnMapUpload(`Invalid complete radio parameters for ${state.origin ?? originId}; blocking upload until a new valid status arrives.`);
+      warnMapUpload(`Invalid complete radio parameters for ${readString(data.origin) ?? originId}. Keeping the latest valid observer status.`);
       return;
     }
 
-    const params = parsedValid
-      ? parsedParams
-      : previous?.params ?? parsedParams;
+    if (!parsedValid) {
+      return;
+    }
 
     const state: ObserverState = {
-      origin: readString(data.origin) ?? previous?.origin,
+      origin: readString(data.origin),
       originId,
-      model: readString(data.model) ?? previous?.model,
-      firmwareVersion: readString(data.firmware_version) ?? previous?.firmwareVersion,
-      clientVersion: readString(data.client_version) ?? previous?.clientVersion,
-      radio: readString(data.radio) ?? previous?.radio,
-      params,
+      params: parsedParams,
       updatedAt: this.now(),
     };
 
@@ -625,6 +609,29 @@ export class MeshcoreMapUploader {
       }
     }
 
+    await this.withUploadSlot(
+      logContext,
+      () => this.processUploadableAdvert({
+        advert,
+        advertKey,
+        candidate,
+        logContext,
+        observer,
+        pubKey,
+      })
+    );
+  }
+
+  private async processUploadableAdvert(input: {
+    advert: Advert;
+    advertKey: string;
+    candidate: PacketCandidate;
+    logContext: AdvertLogContext;
+    observer: ObserverState | undefined;
+    pubKey: string;
+  }): Promise<void> {
+    const { advert, advertKey, candidate, logContext, observer, pubKey } = input;
+
     if (!(await advert.isVerified())) {
       return;
     }
@@ -642,34 +649,135 @@ export class MeshcoreMapUploader {
       }
 
       const now = this.now();
+      if (this.isGlobalRetryCoolingDown(now)) {
+        return;
+      }
+
+      if (this.isAdvertTimestampBlocked(pubKey, advert.timestamp)) {
+        return;
+      }
+
       const lastAttempt = this.lastAttemptByAdvert.get(advertKey);
       if (lastAttempt !== undefined && now - lastAttempt < this.config.retryCooldownMs) {
         return;
       }
+
+      if (!this.reserveAdvertTimestamp(pubKey, advert.timestamp)) {
+        return;
+      }
       this.lastAttemptByAdvert.set(advertKey, now);
 
-      const data = {
-        params,
-        links: [`meshcore://${BufferUtils.bytesToHex(candidate.rawPacket)}`],
-      };
+      try {
+        const data = {
+          params,
+          links: [`meshcore://${BufferUtils.bytesToHex(candidate.rawPacket)}`],
+        };
 
-      const requestData = await this.signData(data);
-      logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel}. Sending to meshcore.io.`);
+        const requestData = await this.signData(data);
+        logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel}. Sending to meshcore.io.`);
 
-      const response = await this.postWithTimeout(requestData);
+        let response: Response;
+        try {
+          response = await this.postWithTimeout(requestData);
+        } catch (error) {
+          this.recordGlobalFailure();
+          throw error;
+        }
 
-      if (!response.ok) {
+        if (!response.ok) {
+          this.recordGlobalFailure();
+          const responseText = trimLogBody(await response.text().catch(() => ""));
+          throw new Error(`meshcore.io responded ${response.status} for ${logContext.advertLabel}: ${responseText}`);
+        }
+
         const responseText = trimLogBody(await response.text().catch(() => ""));
-        throw new Error(`meshcore.io responded ${response.status} for ${logContext.advertLabel}: ${responseText}`);
+        const mapResponse = parseMapApiResponse(responseText);
+        logMapUpload(formatMapApiSuccessLog(logContext, mapResponse, responseText));
+        this.rememberSuccessfulAdvert(pubKey, advert.timestamp);
+      } finally {
+        this.releaseAdvertTimestampReservation(pubKey, advert.timestamp);
       }
-
-      const responseText = trimLogBody(await response.text().catch(() => ""));
-      const mapResponse = parseMapApiResponse(responseText);
-      logMapUpload(formatMapApiSuccessLog(logContext, mapResponse, responseText));
-      this.seenAdverts.set(pubKey, advert.timestamp);
     } finally {
       this.inFlightAdverts.delete(advertKey);
     }
+  }
+
+  private reserveAdvertTimestamp(pubKey: string, timestamp: number): boolean {
+    if (this.isAdvertTimestampBlocked(pubKey, timestamp)) {
+      return false;
+    }
+
+    const reservedTimestamp = this.reservedAdvertTimestamps.get(pubKey);
+    if (reservedTimestamp !== undefined) {
+      if (reservedTimestamp >= timestamp) {
+        return false;
+      }
+
+      if (timestamp < reservedTimestamp + this.config.minReuploadIntervalSeconds) {
+        return false;
+      }
+    }
+
+    this.reservedAdvertTimestamps.set(pubKey, timestamp);
+    return true;
+  }
+
+  private releaseAdvertTimestampReservation(pubKey: string, timestamp: number): void {
+    if (this.reservedAdvertTimestamps.get(pubKey) === timestamp) {
+      this.reservedAdvertTimestamps.delete(pubKey);
+    }
+  }
+
+  private isAdvertTimestampBlocked(pubKey: string, timestamp: number): boolean {
+    const previousTimestamp = this.seenAdverts.get(pubKey);
+    if (previousTimestamp === undefined) {
+      return false;
+    }
+
+    return previousTimestamp >= timestamp
+      || timestamp < previousTimestamp + this.config.minReuploadIntervalSeconds;
+  }
+
+  private rememberSuccessfulAdvert(pubKey: string, timestamp: number): void {
+    const previousTimestamp = this.seenAdverts.get(pubKey);
+    if (previousTimestamp === undefined || timestamp > previousTimestamp) {
+      this.seenAdverts.set(pubKey, timestamp);
+    }
+  }
+
+  private async withUploadSlot(context: AdvertLogContext, task: () => Promise<void>): Promise<void> {
+    if (this.activeUploads >= this.config.maxConcurrentUploads && this.uploadQueue.length >= this.config.maxQueuedUploads) {
+      warnMapUpload(`Upload queue is full. Dropping advert for ${context.advertLabel}.`);
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const run = () => {
+        this.activeUploads += 1;
+        task()
+          .then(resolve, reject)
+          .finally(() => {
+            this.activeUploads -= 1;
+            this.uploadQueue.shift()?.();
+          });
+      };
+
+      if (this.activeUploads < this.config.maxConcurrentUploads) {
+        run();
+      } else {
+        this.uploadQueue.push(run);
+      }
+    });
+  }
+
+  private isGlobalRetryCoolingDown(now = this.now()): boolean {
+    return this.config.globalRetryCooldownMs > 0
+      && this.lastGlobalFailureAt > 0
+      && now - this.lastGlobalFailureAt < this.config.globalRetryCooldownMs;
+  }
+
+  private recordGlobalFailure(): void {
+    this.lastGlobalFailureAt = this.now();
   }
 
   private async signData(data: unknown): Promise<SignedRequest> {
