@@ -54,10 +54,8 @@ function makeConfig(overrides = {}) {
       apiUrl: "https://map.meshcore.io/api/v1/uploader/node",
       minReuploadIntervalSeconds: 3600,
       requestTimeoutMs: 10000,
-      retryCooldownMs: 300000,
-      globalRetryCooldownMs: 60000,
       maxConcurrentUploads: 2,
-      maxQueuedUploads: 200,
+      maxQueuedUploads: 25,
       requireCompleteRadioParams: true,
     },
     ...overrides,
@@ -108,7 +106,7 @@ test("falls back for invalid numeric environment values", () => {
   assert.equal(configured.connectTimeoutMs, 30000);
   assert.equal(configured.mapUploader.requestTimeoutMs, 10000);
   assert.equal(configured.mapUploader.maxConcurrentUploads, 2);
-  assert.equal(configured.mapUploader.maxQueuedUploads, 200);
+  assert.equal(configured.mapUploader.maxQueuedUploads, 25);
 });
 
 test("redacts credentials from source MQTT URLs before logging", () => {

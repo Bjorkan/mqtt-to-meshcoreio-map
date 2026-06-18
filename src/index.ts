@@ -78,10 +78,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
       apiUrl: env.MESHCOREIO_API_URL || "https://map.meshcore.io/api/v1/uploader/node",
       minReuploadIntervalSeconds: envIntInRange(env.MESHCOREIO_MIN_REUPLOAD_SECONDS, 3600, 0, 86400),
       requestTimeoutMs: envIntInRange(env.MESHCOREIO_REQUEST_TIMEOUT_MS, 10000, 1000, 120000),
-      retryCooldownMs: envIntInRange(env.MESHCOREIO_RETRY_COOLDOWN_MS, 300000, 0, 3600000),
-      globalRetryCooldownMs: envIntInRange(env.MESHCOREIO_GLOBAL_RETRY_COOLDOWN_MS, 60000, 0, 3600000),
       maxConcurrentUploads: envIntInRange(env.MESHCOREIO_MAX_CONCURRENT_UPLOADS, 2, 1, 32),
-      maxQueuedUploads: envIntInRange(env.MESHCOREIO_MAX_QUEUED_UPLOADS, 200, 0, 10000),
+      maxQueuedUploads: envIntInRange(env.MESHCOREIO_MAX_QUEUED_UPLOADS, 25, 0, 10000),
       requireCompleteRadioParams: envBool(env.MESHCOREIO_REQUIRE_RADIO_PARAMS, true),
     },
   };

@@ -7,8 +7,6 @@ export interface MapUploaderConfig {
   apiUrl: string;
   minReuploadIntervalSeconds: number;
   requestTimeoutMs: number;
-  retryCooldownMs: number;
-  globalRetryCooldownMs: number;
   maxConcurrentUploads: number;
   maxQueuedUploads: number;
   requireCompleteRadioParams: boolean;
@@ -23,6 +21,7 @@ export interface MapUploaderDependencies {
   fetch?: typeof fetch;
   now?: () => number;
   signingIdentity?: MapUploadSigningIdentity;
+  workerDelay?: (ms: number) => Promise<void>;
 }
 
 interface RadioParams {
@@ -67,6 +66,17 @@ interface AdvertLogContext {
   observerLabel: string;
 }
 
+interface UploadQueueJob {
+  advert: Advert;
+  advertKey: string;
+  candidate: PacketCandidate;
+  logContext: AdvertLogContext;
+  observer: ObserverState | undefined;
+  pubKey: string;
+  remainingTries: number;
+  resolve: () => void;
+}
+
 const HEX_RE = /^[0-9a-f]+$/i;
 const PUBLIC_KEY_HEX_RE = /^[0-9a-f]{64}$/i;
 const MQTT_MESSAGE_TYPES = new Set(["status", "raw", "packets"]);
@@ -77,6 +87,9 @@ const MAX_LOG_BODY_CHARS = 500;
 const MAX_LOG_VALUE_CHARS = 240;
 const OBSERVER_TTL_MS = 24 * 60 * 60 * 1000;
 const SEEN_ADVERT_TTL_SECONDS = 72 * 60 * 60;
+const DROP_LOG_SUPPRESS_MS = 60 * 1000;
+const MAX_UPLOAD_TRIES = 3;
+const UPLOAD_RETRY_DELAY_MS = 5 * 1000;
 const MAP_UPLOAD_LOG_COLOR = "\x1b[36m";
 const RESET_LOG_COLOR = "\x1b[0m";
 const MAP_LOG_COLORS = {
@@ -465,24 +478,53 @@ function formatMapApiSuccessLog(context: AdvertLogContext, response: MapApiRespo
   return `Meshcore.io accepted advert for ${context.advertLabel}${detail ? `: ${detail}` : "."}`;
 }
 
+function isTerminalMapApiResponse(response: MapApiResponseBody | undefined): boolean {
+  return typeof response?.code === "string"
+    && (
+      response.code === "NODES_INSERTED"
+      || response.code.startsWith("ERR_ADVERT_")
+      || response.code.startsWith("ERR_COORDS_")
+    );
+}
+
 function formatSeconds(seconds: number): string {
   return `${Math.max(0, Math.floor(seconds))}s`;
+}
+
+function formatUploadFailureReason(error: unknown): string {
+  if (error instanceof Error) {
+    if (error.name === "AbortError" || /operation was aborted/i.test(error.message)) {
+      return "operation aborted";
+    }
+
+    return trimLogBody(error.message || error.name);
+  }
+
+  return trimLogBody(String(error));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    timeout.unref?.();
+  });
 }
 
 export class MeshcoreMapUploader {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
+  private readonly workerDelay: (ms: number) => Promise<void>;
   private readonly publicKey: Buffer;
   private readonly publicKeyHex: string;
   private readonly privateSeed: Buffer;
   private readonly inFlightAdverts = new Set<string>();
+  private readonly queuedAdvertKeys = new Set<string>();
   private readonly reservedAdvertTimestamps = new Map<string, number>();
-  private readonly lastAttemptByAdvert = new Map<string, number>();
   private readonly seenAdverts = new Map<string, number>();
+  private readonly recentDropLogs = new Map<string, number>();
   private readonly observers = new Map<string, ObserverState>();
-  private readonly uploadQueue: Array<() => void> = [];
+  private readonly uploadQueue: UploadQueueJob[] = [];
   private activeUploads = 0;
-  private lastGlobalFailureAt = 0;
   readonly ready: Promise<void>;
 
   constructor(
@@ -491,6 +533,7 @@ export class MeshcoreMapUploader {
   ) {
     this.fetchImpl = dependencies.fetch ?? fetch;
     this.now = dependencies.now ?? Date.now;
+    this.workerDelay = dependencies.workerDelay ?? delay;
     const signingIdentity = dependencies.signingIdentity ?? createMapUploadSigningIdentity();
     this.publicKey = Buffer.from(signingIdentity.publicKey);
     this.privateSeed = Buffer.from(signingIdentity.privateSeed);
@@ -597,39 +640,42 @@ export class MeshcoreMapUploader {
       observerLabel: formatObserverLabel(observer, candidate.observerId),
     };
 
+    const advertKey = this.makeAdvertKey(pubKey, advert.timestamp);
+
     if (!UPLOADABLE_ADVERT_TYPES.has(advertType)) {
-      logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} has type ${advertType}. Dropping.`);
+      this.logAdvertDrop(`type:${advertKey}:${advertType}`, `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} has type ${advertType}. Dropping.`);
       return;
     }
 
-    const advertKey = this.makeAdvertKey(pubKey, advert.timestamp);
+    if (!(await advert.isVerified())) {
+      this.logAdvertDrop(`signature:${advertKey}`, `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} failed signature verification. Dropping.`, "warn");
+      return;
+    }
+
     const previousTimestamp = this.seenAdverts.get(pubKey);
     if (previousTimestamp !== undefined) {
       if (previousTimestamp >= advert.timestamp) {
-        logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} was already heard at timestamp ${previousTimestamp}. Dropping.`);
+        this.logAdvertDrop(`replay:${advertKey}:${previousTimestamp}`, `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} was already heard at timestamp ${previousTimestamp}. Dropping.`);
         return;
       }
 
       if (advert.timestamp < previousTimestamp + this.config.minReuploadIntervalSeconds) {
-        logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is ${formatSeconds(advert.timestamp - previousTimestamp)} newer than the last upload; minimum reupload interval is ${formatSeconds(this.config.minReuploadIntervalSeconds)}. Dropping.`);
+        this.logAdvertDrop(`reupload:${advertKey}:${previousTimestamp}`, `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is ${formatSeconds(advert.timestamp - previousTimestamp)} newer than the last upload; minimum reupload interval is ${formatSeconds(this.config.minReuploadIntervalSeconds)}. Dropping.`);
         return;
       }
     }
 
-    await this.withUploadSlot(
+    await this.enqueueUpload({
+      advert,
+      advertKey,
+      candidate,
       logContext,
-      () => this.processUploadableAdvert({
-        advert,
-        advertKey,
-        candidate,
-        logContext,
-        observer,
-        pubKey,
-      })
-    );
+      observer,
+      pubKey,
+    });
   }
 
-  private async processUploadableAdvert(input: {
+  private async enqueueUpload(input: {
     advert: Advert;
     advertKey: string;
     candidate: PacketCandidate;
@@ -637,82 +683,143 @@ export class MeshcoreMapUploader {
     observer: ObserverState | undefined;
     pubKey: string;
   }): Promise<void> {
-    const { advert, advertKey, candidate, logContext, observer, pubKey } = input;
+    const { advertKey, logContext } = input;
 
-    if (!(await advert.isVerified())) {
-      warnMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} failed signature verification. Dropping.`);
+    if (this.queuedAdvertKeys.has(advertKey) || this.inFlightAdverts.has(advertKey)) {
       return;
     }
 
-    if (this.inFlightAdverts.has(advertKey)) {
-      logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel}. Already processing. Dropping.`);
-      return;
+    if (this.activeUploads >= this.config.maxConcurrentUploads && this.uploadQueue.length >= this.config.maxQueuedUploads) {
+      warnMapUpload(`Upload queue is full. Dropping advert for ${logContext.advertLabel}.`);
+      return Promise.resolve();
     }
 
-    this.inFlightAdverts.add(advertKey);
-    try {
-      const params = buildUploadParams(observer?.params ?? {});
-      if (this.config.requireCompleteRadioParams && !hasValidParams(params)) {
-        warnMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is missing valid observer radio parameters. Dropping.`);
-        return;
-      }
+    let resolveJob!: () => void;
+    const done = new Promise<void>((resolve) => {
+      resolveJob = resolve;
+    });
 
-      const now = this.now();
-      if (this.isGlobalRetryCoolingDown(now)) {
-        warnMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} skipped because map API uploads are cooling down after a recent failure. Dropping.`);
-        return;
-      }
+    const job: UploadQueueJob = {
+      ...input,
+      remainingTries: MAX_UPLOAD_TRIES,
+      resolve: resolveJob,
+    };
 
-      if (this.isAdvertTimestampBlocked(pubKey, advert.timestamp)) {
-        logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is blocked by a recently uploaded advert for this node. Dropping.`);
-        return;
-      }
+    this.queuedAdvertKeys.add(advertKey);
+    if (this.activeUploads < this.config.maxConcurrentUploads) {
+      this.startUploadJob(job);
+    } else {
+      this.uploadQueue.push(job);
+    }
 
-      const lastAttempt = this.lastAttemptByAdvert.get(advertKey);
-      if (lastAttempt !== undefined && now - lastAttempt < this.config.retryCooldownMs) {
-        warnMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is still in retry cooldown after a failed upload attempt. Dropping.`);
-        return;
-      }
+    return done;
+  }
 
-      if (!this.reserveAdvertTimestamp(pubKey, advert.timestamp)) {
-        logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} conflicts with another queued or active advert for this node. Dropping.`);
-        return;
-      }
-      this.lastAttemptByAdvert.set(advertKey, now);
+  private startUploadJob(job: UploadQueueJob): void {
+    this.activeUploads += 1;
+    this.inFlightAdverts.add(job.advertKey);
 
+    void (async () => {
       try {
-        const data = {
-          params,
-          links: [`meshcore://${BufferUtils.bytesToHex(candidate.rawPacket)}`],
-        };
-
-        const requestData = await this.signData(data);
-        logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel}. Sending to meshcore.io.`);
-
-        let response: Response;
+        await this.processUploadJob(job);
+        this.finishUploadJob(job);
+      } catch (error: unknown) {
+        this.retryOrDropUploadJob(job, error);
+      } finally {
+        this.inFlightAdverts.delete(job.advertKey);
         try {
-          response = await this.postWithTimeout(requestData);
-        } catch (error) {
-          this.recordGlobalFailure();
-          throw error;
+          await this.workerDelay(UPLOAD_RETRY_DELAY_MS);
+        } catch (delayError: unknown) {
+          warnMapUpload(`Upload worker delay failed: ${formatUploadFailureReason(delayError)}.`);
         }
+        this.activeUploads -= 1;
+        this.drainUploadQueue();
+      }
+    })();
+  }
 
-        if (!response.ok) {
-          this.recordGlobalFailure();
-          const responseText = trimLogBody(await response.text().catch(() => ""));
-          throw new Error(`meshcore.io responded ${response.status} for ${logContext.advertLabel}: ${responseText}`);
-        }
+  private async processUploadJob(job: UploadQueueJob): Promise<void> {
+    const { advert, advertKey, candidate, logContext, observer, pubKey } = job;
 
-        const responseText = trimLogBody(await response.text().catch(() => ""));
-        const mapResponse = parseMapApiResponse(responseText);
+    const params = buildUploadParams(observer?.params ?? {});
+    if (this.config.requireCompleteRadioParams && !hasValidParams(params)) {
+      this.logAdvertDrop(`params:${advertKey}`, `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is missing valid observer radio parameters. Dropping.`, "warn");
+      return;
+    }
+
+    if (this.isAdvertTimestampBlocked(pubKey, advert.timestamp)) {
+      this.logAdvertDrop(`timestamp-blocked:${advertKey}`, `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is blocked by a recently uploaded advert for this node. Dropping.`);
+      return;
+    }
+
+    if (!this.reserveAdvertTimestamp(pubKey, advert.timestamp)) {
+      this.logAdvertDrop(`timestamp-reserved:${advertKey}`, `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} conflicts with another queued or active advert for this node. Dropping.`);
+      return;
+    }
+
+    try {
+      const data = {
+        params,
+        links: [`meshcore://${BufferUtils.bytesToHex(candidate.rawPacket)}`],
+      };
+
+      const requestData = await this.signData(data);
+      logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel}. Sending to meshcore.io.`);
+
+      const response = await this.postWithTimeout(requestData);
+      const responseText = trimLogBody(await response.text().catch(() => ""));
+      const mapResponse = parseMapApiResponse(responseText);
+
+      if (!response.ok && isTerminalMapApiResponse(mapResponse)) {
         logMapUpload(formatMapApiSuccessLog(logContext, mapResponse, responseText));
         this.rememberSuccessfulAdvert(pubKey, advert.timestamp);
-      } finally {
-        this.releaseAdvertTimestampReservation(pubKey, advert.timestamp);
+        return;
       }
+
+      if (!response.ok) {
+        throw new Error(`meshcore.io responded ${response.status}${responseText ? `: ${responseText}` : ""}`);
+      }
+
+      logMapUpload(formatMapApiSuccessLog(logContext, mapResponse, responseText));
+      this.rememberSuccessfulAdvert(pubKey, advert.timestamp);
     } finally {
-      this.inFlightAdverts.delete(advertKey);
+      this.releaseAdvertTimestampReservation(pubKey, advert.timestamp);
     }
+  }
+
+  private retryOrDropUploadJob(job: UploadQueueJob, error: unknown): void {
+    job.remainingTries -= 1;
+    const reason = formatUploadFailureReason(error);
+
+    if (job.remainingTries <= 0) {
+      warnMapUpload(`Upload failed for ${job.logContext.advertLabel}: ${reason}. Dropping after ${MAX_UPLOAD_TRIES} failed tries.`);
+      this.finishUploadJob(job);
+      return;
+    }
+
+    warnMapUpload(`Upload failed for ${job.logContext.advertLabel}: ${reason}. Going to the back of the queue, ${job.remainingTries} tries remaining.`);
+    this.requeueUploadJob(job);
+  }
+
+  private requeueUploadJob(job: UploadQueueJob): void {
+    if (this.activeUploads < this.config.maxConcurrentUploads) {
+      this.startUploadJob(job);
+      return;
+    }
+
+    if (this.uploadQueue.length >= this.config.maxQueuedUploads) {
+      warnMapUpload(`Upload queue is full. Dropping advert for ${job.logContext.advertLabel}.`);
+      this.finishUploadJob(job);
+      return;
+    }
+
+    this.uploadQueue.push(job);
+    this.drainUploadQueue();
+  }
+
+  private finishUploadJob(job: UploadQueueJob): void {
+    this.queuedAdvertKeys.delete(job.advertKey);
+    job.resolve();
   }
 
   private reserveAdvertTimestamp(pubKey: string, timestamp: number): boolean {
@@ -758,39 +865,30 @@ export class MeshcoreMapUploader {
     }
   }
 
-  private async withUploadSlot(context: AdvertLogContext, task: () => Promise<void>): Promise<void> {
-    if (this.activeUploads >= this.config.maxConcurrentUploads && this.uploadQueue.length >= this.config.maxQueuedUploads) {
-      warnMapUpload(`Upload queue is full. Dropping advert for ${context.advertLabel}.`);
+  private logAdvertDrop(dropKey: string, message: string, level: "log" | "warn" = "log"): void {
+    const now = this.now();
+    const lastLoggedAt = this.recentDropLogs.get(dropKey);
+    if (lastLoggedAt !== undefined && now - lastLoggedAt < DROP_LOG_SUPPRESS_MS) {
       return;
     }
 
-    await new Promise<void>((resolve, reject) => {
-      const run = () => {
-        this.activeUploads += 1;
-        task()
-          .then(resolve, reject)
-          .finally(() => {
-            this.activeUploads -= 1;
-            this.uploadQueue.shift()?.();
-          });
-      };
+    this.recentDropLogs.set(dropKey, now);
+    if (level === "warn") {
+      warnMapUpload(message);
+    } else {
+      logMapUpload(message);
+    }
+  }
 
-      if (this.activeUploads < this.config.maxConcurrentUploads) {
-        run();
-      } else {
-        this.uploadQueue.push(run);
+  private drainUploadQueue(): void {
+    while (this.activeUploads < this.config.maxConcurrentUploads) {
+      const job = this.uploadQueue.shift();
+      if (!job) {
+        return;
       }
-    });
-  }
 
-  private isGlobalRetryCoolingDown(now = this.now()): boolean {
-    return this.config.globalRetryCooldownMs > 0
-      && this.lastGlobalFailureAt > 0
-      && now - this.lastGlobalFailureAt < this.config.globalRetryCooldownMs;
-  }
-
-  private recordGlobalFailure(): void {
-    this.lastGlobalFailureAt = this.now();
+      this.startUploadJob(job);
+    }
   }
 
   private async signData(data: unknown): Promise<SignedRequest> {
@@ -843,10 +941,10 @@ export class MeshcoreMapUploader {
       }
     }
 
-    const oldestAttempt = now - Math.max(this.config.retryCooldownMs * 2, 60_000);
-    for (const [advertKey, attemptedAt] of this.lastAttemptByAdvert) {
-      if (attemptedAt < oldestAttempt) {
-        this.lastAttemptByAdvert.delete(advertKey);
+    const oldestDropLog = now - DROP_LOG_SUPPRESS_MS;
+    for (const [dropKey, loggedAt] of this.recentDropLogs) {
+      if (loggedAt < oldestDropLog) {
+        this.recentDropLogs.delete(dropKey);
       }
     }
   }

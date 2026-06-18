@@ -38,10 +38,8 @@ function makeConfig(overrides = {}) {
     apiUrl: API_URL,
     minReuploadIntervalSeconds: 3600,
     requestTimeoutMs: 10000,
-    retryCooldownMs: 300000,
-    globalRetryCooldownMs: 60000,
     maxConcurrentUploads: 2,
-    maxQueuedUploads: 200,
+    maxQueuedUploads: 25,
     requireCompleteRadioParams: true,
     ...overrides,
   };
@@ -249,7 +247,36 @@ test('logs map API accepted and recently-updated responses for pushed adverts', 
   }
 });
 
-test('logs in-flight advert deduplication before map upload finishes', async () => {
+test('does not retry terminal map API responses', async () => {
+  const { fetch, requests } = makeFetch({
+    ok: false,
+    status: 409,
+    text: '{"error":"Advert recently processed, ignoring","code":"ERR_ADVERT_DUPLICATE"}',
+  });
+  const uploader = new MeshcoreMapUploader(makeConfig(), {
+    fetch,
+    workerDelay: async () => {},
+  });
+  await rememberDefaultStatus(uploader);
+
+  const logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/packets`,
+      Buffer.from(JSON.stringify({
+        origin_id: OBSERVER_ID,
+        raw: hex(makeAdvertPacket({ timestamp: 1_800_090_500 })),
+      }))
+    );
+  });
+
+  assert.equal(requests.length, 1);
+  assert.match(
+    logs.at(-1),
+    /Meshcore\.io accepted advert for SE-STO-TEST \([0-9a-f]{6}\) but dropped it because it was updated recently\./
+  );
+});
+
+test('silently ignores duplicate adverts already queued or in flight', async () => {
   let releaseFetch;
   const uploader = new MeshcoreMapUploader(makeConfig(), {
     fetch: async () => {
@@ -278,10 +305,7 @@ test('logs in-flight advert deduplication before map upload finishes', async () 
   releaseFetch();
   await first;
 
-  assert.match(
-    logs.at(-1),
-    /Advert for SE-STO-TEST \([0-9a-f]{6}\) received by SE-STO-OBSERVER\. Already processing\. Dropping\./
-  );
+  assert.deepEqual(logs, []);
 });
 
 test('does not log successful observer status updates as map uploads', async () => {
@@ -754,10 +778,10 @@ test('uploads repeater, room, and sensor adverts only', async () => {
   }
 });
 
-test('applies replay, reupload interval, and retry cooldown', async () => {
+test('applies replay, reupload interval, and queued upload retry', async () => {
   const { fetch, requests } = makeFetch();
   let now = 10_000;
-  const uploader = new MeshcoreMapUploader(makeConfig({ retryCooldownMs: 300000 }), {
+  const uploader = new MeshcoreMapUploader(makeConfig(), {
     fetch,
     now: () => now,
   });
@@ -782,30 +806,101 @@ test('applies replay, reupload interval, and retry cooldown', async () => {
   await uploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(later) })));
   assert.equal(requests.length, 2);
 
-  const failing = makeFetch({ ok: false, status: 500, text: 'nope' });
-  const retryUploader = new MeshcoreMapUploader(makeConfig({ retryCooldownMs: 300000, globalRetryCooldownMs: 0 }), {
-    fetch: failing.fetch,
+  const retryRequests = [];
+  let retryAttempt = 0;
+  const retryUploader = new MeshcoreMapUploader(makeConfig(), {
+    fetch: async (url, init) => {
+      retryRequests.push({ url, init });
+      retryAttempt += 1;
+      return retryAttempt === 1
+        ? { ok: false, status: 500, text: async () => 'nope' }
+        : { ok: true, status: 200, text: async () => '{"ok":true}' };
+    },
     now: () => now,
+    workerDelay: async () => {},
   });
   await rememberDefaultStatus(retryUploader);
   const retryPacket = makeAdvertPacket({ timestamp: 1_800_100_000 });
 
-  await assert.rejects(
-    retryUploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(retryPacket) }))),
-    /meshcore\.io responded 500 for SE-STO-TEST \([0-9a-f]{6}\): nope/
-  );
   logs = await captureConsoleOutput(async () => {
     await retryUploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(retryPacket) })));
   });
-  assert.equal(failing.requests.length, 1);
-  assert.match(logs.at(-1), /is still in retry cooldown after a failed upload attempt\. Dropping\./);
+  assert.equal(retryRequests.length, 2);
+  assert.match(logs.join('\n'), /Upload failed for SE-STO-TEST \([0-9a-f]{6}\): meshcore\.io responded 500: nope\. Going to the back of the queue, 2 tries remaining\./);
+  assert.match(logs.at(-1), /Meshcore\.io accepted advert for SE-STO-TEST \([0-9a-f]{6}\): {"ok":true}/);
+});
 
-  now += 300001;
-  await assert.rejects(
-    retryUploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(retryPacket) }))),
-    /meshcore\.io responded 500 for SE-STO-TEST \([0-9a-f]{6}\): nope/
+test('logs aborted uploads with remaining retries', async () => {
+  const requests = [];
+  let attempt = 0;
+  const uploader = new MeshcoreMapUploader(makeConfig(), {
+    fetch: async (url, init) => {
+      requests.push({ url, init });
+      attempt += 1;
+      if (attempt === 1) {
+        throw new DOMException('This operation was aborted', 'AbortError');
+      }
+
+      return { ok: true, status: 200, text: async () => '{"ok":true}' };
+    },
+    workerDelay: async () => {},
+  });
+  await rememberDefaultStatus(uploader);
+
+  const logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_101_000 })) }))
+    );
+  });
+
+  assert.equal(requests.length, 2);
+  assert.match(
+    logs.join('\n'),
+    /Upload failed for SE-STO-TEST \([0-9a-f]{6}\): operation aborted\. Going to the back of the queue, 2 tries remaining\./
   );
-  assert.equal(failing.requests.length, 2);
+});
+
+test('suppresses repeated drop logs for the same advert and reason', async () => {
+  const { fetch, requests } = makeFetch();
+  let now = 10_000;
+  const uploader = new MeshcoreMapUploader(makeConfig(), {
+    fetch,
+    now: () => now,
+  });
+  await rememberDefaultStatus(uploader);
+
+  const packet = makeAdvertPacket({ timestamp: 1_800_400_000 });
+  await uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(packet) }))
+  );
+
+  let logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(packet) }))
+    );
+    await uploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/packets`,
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, raw: hex(packet) }))
+    );
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /was already heard at timestamp 1800400000\. Dropping\./);
+
+  now += 60_001;
+  logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(packet) }))
+    );
+  });
+
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /was already heard at timestamp 1800400000\. Dropping\./);
 });
 
 test('limits concurrent map uploads and queues the rest', async () => {
@@ -825,6 +920,7 @@ test('limits concurrent map uploads and queues the rest', async () => {
       active -= 1;
       return { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
+    workerDelay: async () => {},
   });
   await rememberDefaultStatus(uploader);
 
@@ -850,6 +946,93 @@ test('limits concurrent map uploads and queues the rest', async () => {
   await Promise.all([first, second]);
 });
 
+test('drops extra adverts when the upload queue is full', async () => {
+  const releases = [];
+  const requests = [];
+  const uploader = new MeshcoreMapUploader(makeConfig({
+    maxConcurrentUploads: 1,
+    maxQueuedUploads: 1,
+  }), {
+    fetch: async (url, init) => {
+      requests.push({ url, init });
+      await new Promise((resolve) => releases.push(resolve));
+      return { ok: true, status: 200, text: async () => '{"ok":true}' };
+    },
+    workerDelay: async () => {},
+  });
+  await rememberDefaultStatus(uploader);
+
+  const first = uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_220_000 })) }))
+  );
+  const second = uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_223_700 })) }))
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+
+  const logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_227_400 })) }))
+    );
+  });
+
+  assert.equal(requests.length, 1);
+  assert.match(logs.at(-1), /Upload queue is full\. Dropping advert for SE-STO-TEST \([0-9a-f]{6}\)\./);
+
+  releases.shift()();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 2);
+
+  releases.shift()();
+  await Promise.all([first, second]);
+});
+
+test('worker waits before draining the next queued upload', async () => {
+  const requests = [];
+  let delayCalls = 0;
+  let releaseFirstWorkerDelay;
+  const uploader = new MeshcoreMapUploader(makeConfig({
+    maxConcurrentUploads: 1,
+    maxQueuedUploads: 5,
+  }), {
+    fetch: async (url, init) => {
+      requests.push({ url, init });
+      return { ok: true, status: 200, text: async () => '{"ok":true}' };
+    },
+    workerDelay: async () => {
+      delayCalls += 1;
+      if (delayCalls === 1) {
+        await new Promise((resolve) => {
+          releaseFirstWorkerDelay = resolve;
+        });
+      }
+    },
+  });
+  await rememberDefaultStatus(uploader);
+
+  const first = uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_210_000 })) }))
+  );
+  const second = uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_213_700 })) }))
+  );
+
+  await first;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+
+  releaseFirstWorkerDelay();
+  await second;
+  assert.equal(requests.length, 2);
+});
+
 test('prevents concurrent uploads inside the same node reupload interval', async () => {
   const releases = [];
   const requests = [];
@@ -862,6 +1045,7 @@ test('prevents concurrent uploads inside the same node reupload interval', async
       await new Promise((resolve) => releases.push(resolve));
       return { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
+    workerDelay: async () => {},
   });
   await rememberDefaultStatus(uploader);
 
@@ -899,6 +1083,7 @@ test('skips an older queued advert after a newer advert was uploaded', async () 
       });
       return { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
+    workerDelay: async () => {},
   });
   await rememberDefaultStatus(uploader);
 
@@ -921,44 +1106,25 @@ test('skips an older queued advert after a newer advert was uploaded', async () 
   assert.deepEqual(signedRequestData(requests).links, [`meshcore://${hex(newerPacket)}`]);
 });
 
-test('applies global retry cooldown after map API failures', async () => {
-  let now = 10_000;
+test('drops uploads after three failed tries', async () => {
   const failing = makeFetch({ ok: false, status: 503, text: 'down' });
-  const uploader = new MeshcoreMapUploader(makeConfig({
-    globalRetryCooldownMs: 60000,
-    retryCooldownMs: 0,
-  }), {
+  const uploader = new MeshcoreMapUploader(makeConfig(), {
     fetch: failing.fetch,
-    now: () => now,
+    workerDelay: async () => {},
   });
   await rememberDefaultStatus(uploader);
-
-  await assert.rejects(
-    uploader.processMqttMessage(
-      `meshcore/STO/${OBSERVER_ID}/raw`,
-      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_300_000 })) }))
-    ),
-    /meshcore\.io responded 503/
-  );
 
   const logs = await captureConsoleOutput(async () => {
     await uploader.processMqttMessage(
       `meshcore/STO/${OBSERVER_ID}/raw`,
-      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_303_700 })) }))
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_300_000 })) }))
     );
   });
-  assert.equal(failing.requests.length, 1);
-  assert.match(logs.at(-1), /skipped because map API uploads are cooling down after a recent failure\. Dropping\./);
 
-  now += 60001;
-  await assert.rejects(
-    uploader.processMqttMessage(
-      `meshcore/STO/${OBSERVER_ID}/raw`,
-      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_307_400 })) }))
-    ),
-    /meshcore\.io responded 503/
-  );
-  assert.equal(failing.requests.length, 2);
+  assert.equal(failing.requests.length, 3);
+  assert.match(logs.join('\n'), /Going to the back of the queue, 2 tries remaining\./);
+  assert.match(logs.join('\n'), /Going to the back of the queue, 1 tries remaining\./);
+  assert.match(logs.at(-1), /Upload failed for SE-STO-TEST \([0-9a-f]{6}\): meshcore\.io responded 503: down\. Dropping after 3 failed tries\./);
 });
 
 test('skips oversized packet hex before parsing', async () => {

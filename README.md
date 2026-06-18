@@ -34,12 +34,12 @@ The MQTT source should publish observer `status` messages and MeshCore packet me
 
 Important runtime settings:
 
-- `MESHCOREIO_MAX_CONCURRENT_UPLOADS`: maximum number of simultaneous advert verification/upload tasks. Default: `2`.
-- `MESHCOREIO_MAX_QUEUED_UPLOADS`: maximum number of queued upload tasks waiting for a concurrency slot. Default: `200`.
-- `MESHCOREIO_GLOBAL_RETRY_COOLDOWN_MS`: global cooldown after a MeshCore.io HTTP failure or timeout. Default: `60000`.
-- `MESHCOREIO_RETRY_COOLDOWN_MS`: per-advert retry cooldown. Default: `300000`.
+- `MESHCOREIO_MAX_CONCURRENT_UPLOADS`: maximum number of upload workers draining the global advert upload queue. Default: `2`.
+- `MESHCOREIO_MAX_QUEUED_UPLOADS`: maximum number of queued upload requests waiting for a worker. Default: `25`.
 - `MESHCOREIO_REQUEST_TIMEOUT_MS`: HTTP timeout for MeshCore.io requests. Default: `10000`.
 - `MESHCOREIO_MIN_REUPLOAD_SECONDS`: minimum accepted advert timestamp gap per advertised node. Default: `3600`.
+
+Failed MeshCore.io upload attempts are placed at the back of the global queue and retried up to three total tries. After each upload job, the worker waits 5 seconds before taking another queued request. If the queue is full, extra upload requests are dropped.
 
 Numeric environment variables are range-checked. Invalid, negative, zero-where-not-allowed, or unreasonably large values fall back to safe defaults.
 

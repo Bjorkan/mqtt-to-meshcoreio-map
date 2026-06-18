@@ -115,11 +115,14 @@ The request body is signed and has this shape:
 6. Continue only if the packet payload is a MeshCore `ADVERT`.
 7. Parse the advert, verify its signature, and keep only `REPEATER`, `ROOM`, and `SENSOR` adverts.
 8. Put eligible adverts through a bounded global upload queue.
-9. Skip stale adverts, duplicate in-flight adverts, too-frequent reuploads, adverts without complete valid radio parameters, and adverts received during global API cooldown.
+9. Skip stale adverts, duplicate queued or in-flight adverts, too-frequent reuploads, and adverts without complete valid radio parameters.
 10. Build MeshCore.io upload data with normalized radio params and a `meshcore://...` link containing the original packet bytes.
 11. Sign the upload with the in-memory ephemeral private key.
 12. POST the signed request to MeshCore.io and log the API result.
+13. Treat terminal MeshCore.io API responses, such as inserted, duplicate, or coordinates-missing responses, as handled and remove them from the queue.
+14. Retry failed upload attempts by placing the advert at the back of the global queue, up to three total tries.
+15. Wait 5 seconds after each upload job before that worker takes the next queued request.
 
-Deduplication, replay protection, observer radio state, in-flight uploads, and cooldowns are kept in memory. A service restart starts with an empty local cache; MeshCore.io may still apply its own duplicate handling.
+Deduplication, replay protection, observer radio state, queued uploads, in-flight uploads, and retry state are kept in memory. A service restart starts with an empty local cache; MeshCore.io may still apply its own duplicate handling.
 
 If the same advert is heard by multiple observers, the bridge uploads the first accepted copy for that advertised node/timestamp. Later copies with different observer radio data may be skipped by duplicate and reupload protection.
