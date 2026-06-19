@@ -33,6 +33,7 @@ export interface DashboardAdvertLocation {
   observerName?: string;
   lat: number;
   lon: number;
+  responseFromMeshcoreIO?: string;
 }
 
 export interface DashboardQueueItem {
@@ -43,6 +44,7 @@ export interface DashboardQueueItem {
   job: DashboardJobSnapshot;
   workerId?: string;
   detail?: string;
+  responseFromMeshcoreIO?: string;
 }
 
 export interface DashboardWorkerSnapshot {
@@ -269,9 +271,9 @@ export class DashboardState {
     this.archiveQueueItem(job.requestId);
   }
 
-  queueHandled(job: MapUploadWorkRequest): void {
-    this.upsertQueueItem(job, "handled", null, undefined, "Handled.");
-    this.updateAdvertStatus(job.requestId, "pushed", "MeshCore.io handled the upload request.");
+  queueHandled(job: MapUploadWorkRequest, responseFromMeshcoreIO?: string): void {
+    this.upsertQueueItem(job, "handled", null, undefined, "Handled.", responseFromMeshcoreIO);
+    this.updateAdvertStatus(job.requestId, "pushed", "MeshCore.io handled the upload request.", responseFromMeshcoreIO);
     this.archiveQueueItem(job.requestId);
   }
 
@@ -349,7 +351,8 @@ export class DashboardState {
     state: DashboardQueueItem["state"],
     position: number | null,
     workerId?: string,
-    detail?: string
+    detail?: string,
+    responseFromMeshcoreIO?: string
   ): void {
     this.queueItems.set(job.requestId, {
       id: job.requestId,
@@ -359,6 +362,7 @@ export class DashboardState {
       job: toJobSnapshot(job),
       workerId,
       detail,
+      responseFromMeshcoreIO,
     });
   }
 
@@ -373,12 +377,15 @@ export class DashboardState {
     while (this.queueHistory.length > MAX_QUEUE_HISTORY) {
       this.queueHistory.pop();
     }
+
+    this.adverts.delete(requestId);
   }
 
   private updateAdvertStatus(
     requestId: string,
     status: DashboardAdvertLocation["status"],
-    statusDetail: string
+    statusDetail: string,
+    responseFromMeshcoreIO?: string
   ): void {
     const advert = this.adverts.get(requestId);
     if (!advert) {
@@ -387,6 +394,7 @@ export class DashboardState {
 
     advert.status = status;
     advert.statusDetail = statusDetail;
+    advert.responseFromMeshcoreIO = responseFromMeshcoreIO;
     advert.updatedAt = isoNow();
   }
 

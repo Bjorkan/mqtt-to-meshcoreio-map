@@ -139,6 +139,7 @@ test('posts JSON-serializable queue work requests without parsed Advert instance
     status: 'handled',
     pubKey: nodePublicKey,
     timestamp: 1_800_091_500,
+    responseFromMeshcoreIO: '{"code":"NODES_INSERTED"}',
   });
   assert.match(workRequest.requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.equal(requests.length, 1);

@@ -7,6 +7,7 @@ import {
   MeshcoreMapUploader,
   type MapUploaderConfig,
 } from "./map-uploader.js";
+import type { MapUploadWorkRequest } from "./map-types.js";
 
 export interface RuntimeConfig {
   sourceUrl: string;
@@ -148,25 +149,85 @@ const DEMO_STATUSES = [
   { status: "ignored", detail: "Demo duplicate advert was ignored." },
 ] as const;
 
+const DEMO_WORKERS = ["demo-worker-1", "demo-worker-2"];
+
+function makeDemoJob(advert: typeof DEMO_ADVERTS[number], index: number, requestId: string): MapUploadWorkRequest {
+  const nodePublicKey = `${String(index + 1).repeat(64)}`.slice(0, 64);
+  return {
+    requestId,
+    retriesAllowed: 3,
+    advertKey: `${nodePublicKey}:${Math.floor(Date.now() / 1000)}`,
+    advertTimestamp: Math.floor(Date.now() / 1000),
+    advertType: advert.type.toUpperCase(),
+    nodeName: advert.nodeName,
+    nodePublicKey,
+    rawPacketHex: "deadbeef0102030405",
+    observerId: `demo-observer-${index + 1}`,
+    observerName: "DEMO-OBSERVER",
+    radioParams: { freq: 869.5, bw: 125, sf: 9, cr: 5 },
+    logContext: {
+      advertLabel: `${advert.nodeName} (${nodePublicKey.slice(0, 6)})`,
+      observerLabel: "DEMO-OBSERVER",
+    },
+  };
+}
+
 function startDashboardDemoAdverts(state: DashboardState): NodeJS.Timeout {
-  const requestIds = DEMO_ADVERTS.map(() => randomUUID());
+  const sharedIds = DEMO_ADVERTS.map(() => randomUUID());
+  state.configureWorkers(DEMO_WORKERS);
+
+  const queueJobs: Array<{ job: MapUploadWorkRequest; workerId: string; stage: number }> = [];
+
   let tick = 0;
   const publish = () => {
-    DEMO_ADVERTS.forEach((advert, index) => {
+    // Advance existing queue jobs
+    for (const item of queueJobs) {
+      item.stage += 1;
+    }
+
+    // Remove fully finished jobs (stage 4+)
+    while (queueJobs.length > 0 && queueJobs[0].stage >= 4) {
+      queueJobs.shift();
+    }
+
+    // Add a new queue job each tick, reusing the same requestId as the map marker
+    const advertIndex = tick % DEMO_ADVERTS.length;
+    const advert = DEMO_ADVERTS[advertIndex];
+    const requestId = sharedIds[advertIndex];
+    const workerId = DEMO_WORKERS[tick % DEMO_WORKERS.length];
+    const job = makeDemoJob(advert, advertIndex, requestId);
+
+    state.queueStartedImmediately(job);
+    state.workerUploading(workerId, job);
+    queueJobs.push({ job, workerId, stage: 0 });
+
+    // Process transitions for inflight jobs
+    for (const item of queueJobs) {
+      if (item.stage === 2) {
+        state.queueHandled(item.job, '{"code":"NODES_INSERTED","message":"Demo upload accepted."}');
+        state.workerCooldown(item.workerId, item.job);
+      } else if (item.stage === 3) {
+        state.workerIdle(item.workerId);
+      }
+    }
+
+    // Map markers — run AFTER queue processing so they overwrite any advert deletions
+    DEMO_ADVERTS.forEach((advertItem, index) => {
       const demoStatus = DEMO_STATUSES[(index + tick) % DEMO_STATUSES.length];
       state.recordDemoAdvertLocation({
-        requestId: requestIds[index],
+        requestId: sharedIds[index],
         status: demoStatus.status,
         statusDetail: demoStatus.detail,
-        nodeName: advert.nodeName,
+        nodeName: advertItem.nodeName,
         nodePublicKey: `${String(index + 1).repeat(64)}`.slice(0, 64),
-        advertType: advert.type,
+        advertType: advertItem.type,
         observerId: `demo-observer-${index + 1}`,
         observerName: "DEMO-OBSERVER",
-        lat: advert.lat,
-        lon: advert.lon,
+        lat: advertItem.lat,
+        lon: advertItem.lon,
       });
     });
+
     tick += 1;
   };
 

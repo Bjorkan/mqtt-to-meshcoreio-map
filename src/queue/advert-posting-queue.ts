@@ -96,7 +96,7 @@ export class AdvertPostingQueue {
         const result = await poster.post(job);
         if (result.status === "handled") {
           this.onHandled(result.pubKey, result.timestamp);
-          this.dashboardState?.queueHandled(job);
+          this.dashboardState?.queueHandled(job, result.responseFromMeshcoreIO);
           this.finishUploadJob(job);
         } else {
           this.retryOrDropUploadJob(job, result.error);

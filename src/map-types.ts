@@ -82,5 +82,5 @@ export interface MapUploadWorkRequest {
 }
 
 export type PosterResult =
-  | { status: "handled"; pubKey: string; timestamp: number }
+  | { status: "handled"; pubKey: string; timestamp: number; responseFromMeshcoreIO?: string }
   | { status: "retry"; error: unknown };

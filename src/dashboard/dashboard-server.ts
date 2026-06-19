@@ -254,6 +254,15 @@ const DASHBOARD_HTML = `<!doctype html>
       cursor: pointer;
     }
     .icon-button:hover { border-color: var(--accent); }
+    .history-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    #history-list {
+      max-height: 360px;
+    }
     @media (max-width: 940px) {
       .panels { grid-template-columns: 1fr; }
       .panels > section { height: 360px; }
@@ -304,6 +313,12 @@ const DASHBOARD_HTML = `<!doctype html>
       </div>
       <div class="map" id="map" role="img" aria-label="Advert flow locations from the last hour"></div>
     </section>
+    <section>
+      <div class="section-head">
+        <h2>History</h2>
+      </div>
+      <div class="list" id="history-list"></div>
+    </section>
   </main>
   <dialog id="detail-dialog">
     <div class="dialog-head">
@@ -316,7 +331,7 @@ const DASHBOARD_HTML = `<!doctype html>
   </dialog>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const state = { selected: null, dashboard: null };
+    const state = { selected: null, dashboard: null, mapFirstRender: true };
     const dialog = document.getElementById("detail-dialog");
     const detailTitle = document.getElementById("detail-title");
     const detailBody = document.getElementById("detail-body");
@@ -325,6 +340,11 @@ const DASHBOARD_HTML = `<!doctype html>
     let leafletMap = null;
     let markerLayer = null;
     document.getElementById("detail-close").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) {
+        dialog.close();
+      }
+    });
     fullscreenButton.addEventListener("click", async () => {
       if (!document.fullscreenElement && mapSection.requestFullscreen) {
         await mapSection.requestFullscreen();
@@ -367,6 +387,19 @@ const DASHBOARD_HTML = `<!doctype html>
       }[char]));
     }
 
+    function resolveDetail(requestId) {
+      if (!state.dashboard || !requestId) return null;
+      for (const list of [state.dashboard.queue.items, state.dashboard.queue.history]) {
+        for (const item of list || []) {
+          if (item.job?.requestId === requestId) return item;
+        }
+      }
+      for (const advert of state.dashboard.map.advertsLastHour || []) {
+        if (advert.requestId === requestId) return advert;
+      }
+      return null;
+    }
+
     function newestGeneratedAt(...payloads) {
       return payloads
         .map((payload) => payload?.generatedAt)
@@ -402,14 +435,14 @@ const DASHBOARD_HTML = `<!doctype html>
       if (leafletMap || !window.L) return;
       leafletMap = L.map("map", {
         worldCopyJump: true,
-        zoomControl: false,
-        dragging: false,
-        scrollWheelZoom: false,
-        doubleClickZoom: false,
-        boxZoom: false,
-        keyboard: false,
-        tap: false,
-        touchZoom: false,
+        zoomControl: true,
+        dragging: true,
+        scrollWheelZoom: true,
+        doubleClickZoom: true,
+        boxZoom: true,
+        keyboard: true,
+        tap: true,
+        touchZoom: true,
       }).setView([54, 12], 4);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
@@ -438,7 +471,7 @@ const DASHBOARD_HTML = `<!doctype html>
           weight: 1.5,
           fillColor: color,
           fillOpacity: 0.92,
-          interactive: false,
+          interactive: true,
         });
         marker.bindTooltip(
           '<strong>' + name + '</strong><br>request ' + request + '<br>' +
@@ -446,13 +479,17 @@ const DASHBOARD_HTML = `<!doctype html>
           '<br>' + advert.lat.toFixed(5) + ', ' + advert.lon.toFixed(5),
           { permanent: false, direction: "top", opacity: 0.95 }
         );
+        marker.on("click", () => {
+          showDetail("Marker: " + name, resolveDetail(advert.requestId) || advert);
+        });
         marker.addTo(markerLayer);
         bounds.push([advert.lat, advert.lon]);
       }
 
-      if (bounds.length > 0) {
+      if (bounds.length > 0 && state.mapFirstRender) {
         leafletMap.fitBounds(bounds, { padding: [38, 38], maxZoom: 13 });
-      } else {
+        state.mapFirstRender = false;
+      } else if (bounds.length === 0) {
         leafletMap.setView([54, 12], 4);
       }
       setTimeout(() => leafletMap.invalidateSize(), 0);
@@ -471,7 +508,10 @@ const DASHBOARD_HTML = `<!doctype html>
         return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>Worker ' + shortRequestId(worker.id) + '</strong><span class="pill ' + pillClass(worker.state) + '">' + worker.state + '</span></div><div class="muted">' + label + '</div></button>';
       }).join("") || '<div class="muted">No workers configured.</div>';
       target.querySelectorAll("button").forEach((button) => {
-        button.addEventListener("click", () => showDetail("Worker " + shortRequestId(workers[Number(button.dataset.index)].id), workers[Number(button.dataset.index)]));
+        button.addEventListener("click", () => {
+          const wrk = workers[Number(button.dataset.index)];
+          showDetail("Worker " + shortRequestId(wrk.id), resolveDetail(wrk.currentJob?.requestId) || wrk);
+        });
       });
     }
 
@@ -483,7 +523,47 @@ const DASHBOARD_HTML = `<!doctype html>
         return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + item.state + '</span></div><div class="muted">request ' + shortRequestId(job.requestId) + ' · ' + escapeText(job.advertType) + ' ' + shortKey(job.nodePublicKey) + ' · ' + position + '</div></button>';
       }).join("") || '<div class="muted">Queue is empty.</div>';
       target.querySelectorAll("button").forEach((button) => {
-        button.addEventListener("click", () => showDetail("Queue item", queue[Number(button.dataset.index)]));
+        button.addEventListener("click", () => {
+          const item = queue[Number(button.dataset.index)];
+          showDetail(escapeText(item.job?.nodeName || "Queue item"), resolveDetail(item.job?.requestId) || item);
+        });
+      });
+    }
+
+    function shortResponse(value) {
+      if (!value) return "";
+      try {
+        const parsed = JSON.parse(value);
+        return escapeText(parsed.code || parsed.message || parsed.error || value.slice(0, 60));
+      } catch {
+        return escapeText(value.slice(0, 60));
+      }
+    }
+
+    function renderHistory(history) {
+      const target = document.getElementById("history-list");
+      if (!history || history.length === 0) {
+        target.innerHTML = '<div class="muted" style="text-align:center;padding:20px">No completed adverts yet.</div>';
+        return;
+      }
+      target.innerHTML = history.map((item, index) => {
+        const job = item.job;
+        const name = escapeText(job.nodeName || shortKey(job.nodePublicKey));
+        const type = escapeText(job.advertType);
+        const rid = escapeText(job.requestId || "");
+        const status = escapeText(item.state);
+        const resp = shortResponse(item.responseFromMeshcoreIO);
+        return '<button class="item" type="button" data-index="' + index + '">' +
+          '<div class="row"><strong>' + name + '</strong><span class="pill ' + pillClass(item.state) + '">' + status + '</span></div>' +
+          '<div class="row"><span class="muted">' + formatTime(item.updatedAt) + ' · ' + type + '</span><span class="pill">' + rid + '</span></div>' +
+          (resp ? '<div class="row muted" style="margin-top:4px">Response: ' + resp + '</div>' : '') +
+          '</button>';
+      }).join("");
+      target.querySelectorAll("button").forEach((button) => {
+        button.addEventListener("click", () => {
+          const item = history[Number(button.dataset.index)];
+          showDetail(escapeText(item.job?.nodeName || "History item"), resolveDetail(item.job?.requestId) || item);
+        });
       });
     }
 
@@ -504,6 +584,7 @@ const DASHBOARD_HTML = `<!doctype html>
       renderLogs(snapshot.reader.decisions);
       renderWorkers(snapshot.worker.workers);
       renderQueue(snapshot.queue.items);
+      renderHistory(snapshot.queue.history);
     }
 
     refresh().catch((error) => {
@@ -542,7 +623,7 @@ function dashboardPayload(state: DashboardState): unknown {
     queue: {
       generatedAt: snapshot.generatedAt,
       items: snapshot.queue,
-      history: snapshot.queueHistory,
+      history: snapshot.queueHistory.slice(0, 100),
     },
     worker: {
       generatedAt: snapshot.generatedAt,

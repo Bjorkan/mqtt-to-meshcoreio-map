@@ -86,7 +86,7 @@ export class MeshcoreioPoster {
 
       if (!response.ok && isTerminalMapApiResponse(mapResponse)) {
         logMapUpload(formatMapApiSuccessLog(logContext, mapResponse, responseText));
-        return { status: "handled", pubKey: nodePublicKey, timestamp: advertTimestamp };
+        return { status: "handled", pubKey: nodePublicKey, timestamp: advertTimestamp, responseFromMeshcoreIO: responseText };
       }
 
       if (!response.ok) {
@@ -97,7 +97,7 @@ export class MeshcoreioPoster {
       }
 
       logMapUpload(formatMapApiSuccessLog(logContext, mapResponse, responseText));
-      return { status: "handled", pubKey: nodePublicKey, timestamp: advertTimestamp };
+      return { status: "handled", pubKey: nodePublicKey, timestamp: advertTimestamp, responseFromMeshcoreIO: responseText };
     } catch (error: unknown) {
       return { status: "retry", error };
     }
