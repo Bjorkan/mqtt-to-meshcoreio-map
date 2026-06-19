@@ -1,4 +1,7 @@
 import http from "node:http";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   DashboardAdvertLocation,
   DashboardLogEntry,
@@ -9,6 +12,24 @@ import type {
 
 const MAX_API_EVENTS = 100;
 const DASHBOARD_POLL_INTERVAL_MS = 2000;
+const DASHBOARD_ASSETS_DIR = fileURLToPath(new URL("./assets/node_types/", import.meta.url));
+const NODE_TYPE_COLOR_PLACEHOLDER = "__NODE_TYPE_FILL__";
+
+function readNodeTypeSvgTemplate(nodeType: 1 | 2 | 3): string {
+  const template = readFileSync(path.join(DASHBOARD_ASSETS_DIR, `${nodeType}.svg`), "utf8").trim();
+  const colorizedTemplate = template.replace(/\.a\{fill:[^}]+\}/, `.a{fill:${NODE_TYPE_COLOR_PLACEHOLDER}}`);
+  if (colorizedTemplate === template) {
+    throw new Error(`Dashboard node type SVG ${nodeType}.svg is missing a '.a{fill:...}' style rule.`);
+  }
+
+  return colorizedTemplate;
+}
+
+const NODE_TYPE_SVG_TEMPLATES = {
+  1: readNodeTypeSvgTemplate(1),
+  2: readNodeTypeSvgTemplate(2),
+  3: readNodeTypeSvgTemplate(3),
+} as const;
 
 const DASHBOARD_HTML = `<!doctype html>
 <html lang="en">
@@ -154,36 +175,7 @@ const DASHBOARD_HTML = `<!doctype html>
     }
     .leaflet-control-attribution a { color: var(--accent); }
     .meshcore-node-icon, .meshcore-cluster-icon { background: none; border: 0; }
-    .meshcore-node-dot {
-      display: block;
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: var(--marker-color);
-      border: 2px solid #fff;
-      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55);
-    }
-    .meshcore-node-type-2 .meshcore-node-dot::after {
-      content: "";
-      display: block;
-      width: 10px;
-      height: 10px;
-      margin: 7px auto;
-      border: 3px solid #fff;
-      border-radius: 50%;
-    }
-    .meshcore-node-type-3 .meshcore-node-dot::after {
-      content: "";
-      display: block;
-      width: 14px;
-      height: 8px;
-      margin: 9px auto;
-      background: #fff;
-      border-radius: 8px 8px 3px 3px;
-    }
-    .meshcore-node-icon.accepted { --marker-color: var(--ok); }
-    .meshcore-node-icon.pending { --marker-color: var(--warn); }
-    .meshcore-node-icon.rejected { --marker-color: var(--error); }
+    .meshcore-node-icon svg { width: 32px; height: 32px; display: block; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.45)); }
     .meshcore-cluster-icon {
       background-clip: padding-box;
       border-radius: 20px;
@@ -572,6 +564,15 @@ const DASHBOARD_HTML = `<!doctype html>
       badge.className = "status-badge " + (state === "connected" ? "connected" : "");
     }
 
+    const STATUS_COLORS = { accepted: 'var(--ok)', pending: 'var(--warn)', rejected: 'var(--error)' };
+
+    // SVG icons are loaded from vendored files in this repository, adapted from meshcore-dev/map.meshcore.io (MIT licence).
+    const NODE_TYPE_SVG_TEMPLATES = ${JSON.stringify(NODE_TYPE_SVG_TEMPLATES)};
+
+    function tintNodeTypeSvg(template, color) {
+      return String(template || "").replace(${JSON.stringify(NODE_TYPE_COLOR_PLACEHOLDER)}, color);
+    }
+
     function markerStatus(status) {
       if (status === "rejected" || status === "accepted") return status;
       return "pending";
@@ -590,8 +591,10 @@ const DASHBOARD_HTML = `<!doctype html>
       const cacheKey = nodeType + "|" + status;
       const cached = markerIconCache.get(cacheKey);
       if (cached) return cached;
+      const color = STATUS_COLORS[status] || STATUS_COLORS.pending;
+      const svgTemplate = NODE_TYPE_SVG_TEMPLATES[nodeType] || NODE_TYPE_SVG_TEMPLATES[1];
       const icon = L.divIcon({
-        html: '<span class="meshcore-node-dot"></span>',
+        html: tintNodeTypeSvg(svgTemplate, color),
         className: "meshcore-node-icon meshcore-node-type-" + nodeType + " " + status,
         iconSize: [32, 32],
         iconAnchor: [17, 17],

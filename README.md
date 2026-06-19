@@ -64,6 +64,8 @@ Set `ENABLE_DASHBOARD=true` to serve a small read-only dashboard from the same p
 - A read-only OpenStreetMap view for adverts with lat/lon received during the last hour.
 
 The browser renders the dashboard from a single read-only JSON endpoint at `/api`.
+MeshCore node-type SVG icons are vendored locally in `src/dashboard/assets/node_types/` from
+`meshcore-dev/map.meshcore.io` (MIT license).
 
 In Docker Compose, publish the internal dashboard port `80` to host port `6543`:
 
