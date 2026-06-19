@@ -30,7 +30,7 @@ test("dashboard serves HTML at root and index", async () => {
 
       assert.equal(response.status, 200);
       assert.match(response.headers.get("content-type") ?? "", /text\/html/);
-      assert.match(body, /mqtt-to-meshcoreio-map dashboard/);
+      assert.match(body, /MQTT to Meshcore\.io Map Dashboard/);
     }
   });
 });

@@ -6,7 +6,7 @@ const DASHBOARD_HTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>mqtt-to-meshcoreio-map dashboard</title>
+  <title>MQTT to Meshcore.io Map Dashboard</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
     :root {
@@ -39,7 +39,7 @@ const DASHBOARD_HTML = `<!doctype html>
       background: #111922;
       position: sticky;
       top: 0;
-      z-index: 10;
+      z-index: 1000;
     }
     h1, h2, h3 { margin: 0; }
     h1 { font-size: 19px; letter-spacing: 0; }
@@ -94,6 +94,7 @@ const DASHBOARD_HTML = `<!doctype html>
     .map-section:fullscreen {
       padding: 14px;
       background: var(--panel);
+      z-index: 2000;
     }
     .map-section:fullscreen .map {
       height: calc(100vh - 96px);
@@ -286,7 +287,7 @@ const DASHBOARD_HTML = `<!doctype html>
 </head>
 <body>
   <header>
-    <h1>mqtt-to-meshcoreio-map dashboard</h1>
+    <h1>MQTT to Meshcore.io Map Dashboard</h1>
     <div class="muted" id="updated">Waiting for data</div>
   </header>
   <main>
