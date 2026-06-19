@@ -62,14 +62,17 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /function clusterStatus/);
       assert.match(body, /meshcore-cluster-icon/);
       assert.match(body, /meshcore-node-icon/);
+      assert.match(body, /\.leaflet-top, \.leaflet-bottom \{ z-index: 900; \}/);
       assert.match(body, /--ok: #61d394/);
       assert.match(body, /--warn: #f4c95d/);
       assert.match(body, /--error: #ff6b6b/);
       assert.match(body, /function setExpandedMap/);
       assert.match(body, /mapSection\.classList\.toggle\("is-expanded"/);
       assert.match(body, /100dvh/);
+      assert.match(body, /return \[advert\.requestKey \|\| "", advert\.nodeKey \|\| "", advert\.nodePublicKey \|\| ""\]\.join\("\|"\);/);
       assert.match(body, /marker\.bindTooltip/);
       assert.match(body, /showDetail\("Marker: "/);
+      assert.doesNotMatch(body, /function markerColor/);
       assert.doesNotMatch(body, /marker\.bindPopup/);
       assert.doesNotMatch(body, /table\.node-info/);
     }

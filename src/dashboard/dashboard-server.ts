@@ -137,6 +137,7 @@ const DASHBOARD_HTML = `<!doctype html>
       color: var(--text);
       font-family: inherit;
     }
+    .leaflet-top, .leaflet-bottom { z-index: 900; }
     .leaflet-control-attribution {
       background: rgba(15, 21, 27, 0.82);
       color: var(--muted);
@@ -535,12 +536,6 @@ const DASHBOARD_HTML = `<!doctype html>
       badge.className = "status-badge " + (state === "connected" ? "connected" : "");
     }
 
-    function markerColor(status) {
-      if (status === "rejected") return "#ff6b6b";
-      if (status === "accepted") return "#61d394";
-      return "#f4c95d";
-    }
-
     function markerStatus(status) {
       if (status === "rejected" || status === "accepted") return status;
       return "pending";
@@ -567,7 +562,6 @@ const DASHBOARD_HTML = `<!doctype html>
         popupAnchor: [0, -16],
       });
       markerIconCache.set(cacheKey, icon);
-      markerColor(status);
       return icon;
     }
 
@@ -615,7 +609,7 @@ const DASHBOARD_HTML = `<!doctype html>
     }
 
     function markerKey(advert) {
-      return [advert.requestKey || "", advert.nodeKey || "", advert.nodePublicKey || "", advert.lat, advert.lon].join("|");
+      return [advert.requestKey || "", advert.nodeKey || "", advert.nodePublicKey || ""].join("|");
     }
 
     function markerFingerprint(advert) {
