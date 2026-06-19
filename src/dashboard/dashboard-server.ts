@@ -244,8 +244,12 @@ const DASHBOARD_HTML = `<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      padding: 14px;
+      min-height: 58px;
+      padding: 10px 14px;
       border-bottom: 1px solid var(--line);
+    }
+    .dialog-head h2 {
+      line-height: 1.2;
     }
     .dialog-body { padding: 14px; }
     pre {
