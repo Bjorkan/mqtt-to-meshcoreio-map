@@ -53,6 +53,25 @@ test("dashboard serves HTML at root and index", async () => {
       assert.equal(response.status, 200);
       assert.match(response.headers.get("content-type") ?? "", /text\/html/);
       assert.match(body, /MQTT to Meshcore\.io Map Dashboard/);
+      assert.match(body, /leaflet\.markercluster@1\.5\.3/);
+      assert.match(body, /disableClusteringAtZoom: 12/);
+      assert.match(body, /chunkedLoading: true/);
+      assert.match(body, /function advertNodeType/);
+      assert.match(body, /normalized === "REPEATER"\) return 2/);
+      assert.match(body, /normalized === "ROOM"\) return 3/);
+      assert.match(body, /function clusterStatus/);
+      assert.match(body, /meshcore-cluster-icon/);
+      assert.match(body, /meshcore-node-icon/);
+      assert.match(body, /--ok: #61d394/);
+      assert.match(body, /--warn: #f4c95d/);
+      assert.match(body, /--error: #ff6b6b/);
+      assert.match(body, /function setExpandedMap/);
+      assert.match(body, /mapSection\.classList\.toggle\("is-expanded"/);
+      assert.match(body, /100dvh/);
+      assert.match(body, /marker\.bindTooltip/);
+      assert.match(body, /showDetail\("Marker: "/);
+      assert.doesNotMatch(body, /marker\.bindPopup/);
+      assert.doesNotMatch(body, /table\.node-info/);
     }
   });
 });
@@ -90,6 +109,7 @@ test("dashboard API exposes only render-safe fields", async () => {
     nodePublicKey: job.nodePublicKey,
     advertType: job.advertType,
     advertTimestamp: job.advertTimestamp,
+    radioParams: job.radioParams,
     observerId: job.observerId,
     observerName: job.observerName,
     lat: 59.3293,
@@ -117,8 +137,10 @@ test("dashboard API exposes only render-safe fields", async () => {
     assert.equal(body.queue.history[0].responseSummary, "NODES_INSERTED");
     assert.equal(body.map.advertsLastHour[0].requestKey, "request-");
     assert.equal(body.map.advertsLastHour[0].requestId, undefined);
+    assert.equal(body.map.advertsLastHour[0].advertType, "REPEATER");
     assert.equal(body.map.advertsLastHour[0].nodeKey, "aaaaaaaa");
     assert.equal(body.map.advertsLastHour[0].nodePublicKey, job.nodePublicKey);
+    assert.equal(body.map.advertsLastHour[0].radioParams, undefined);
     assert.equal(body.worker.workers[0].workerKey, "worker-1");
     assert.equal(body.worker.workers[0].id, undefined);
     assert.equal(body.worker.workers[0].currentJob.requestKey, "request-");

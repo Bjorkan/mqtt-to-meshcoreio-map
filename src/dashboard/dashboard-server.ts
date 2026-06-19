@@ -16,6 +16,7 @@ const DASHBOARD_HTML = `<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MQTT to Meshcore.io Map Dashboard</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <style>
     :root {
       color-scheme: dark;
@@ -104,8 +105,20 @@ const DASHBOARD_HTML = `<!doctype html>
       background: var(--panel);
       z-index: 2000;
     }
-    .map-section:fullscreen .map {
+    .map-section.is-expanded {
+      position: fixed;
+      inset: 0;
+      z-index: 2000;
+      border-radius: 0;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel);
+    }
+    .map-section:fullscreen .map, .map-section.is-expanded .map {
+      flex: 1;
       height: calc(100vh - 96px);
+      height: calc(100dvh - 96px);
       max-height: none;
     }
     .map-tools {
@@ -134,6 +147,44 @@ const DASHBOARD_HTML = `<!doctype html>
       color: var(--muted);
     }
     .leaflet-control-attribution a { color: var(--accent); }
+    .meshcore-node-icon, .meshcore-cluster-icon {
+      background: none;
+      border: 0;
+    }
+    .meshcore-node-icon svg {
+      display: block;
+      width: 32px;
+      height: 32px;
+      filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.48));
+    }
+    .meshcore-cluster-icon {
+      background-clip: padding-box;
+      border-radius: 20px;
+    }
+    .meshcore-cluster-icon div {
+      width: 30px;
+      height: 30px;
+      margin-left: 5px;
+      margin-top: 5px;
+      border-radius: 15px;
+      display: grid;
+      place-items: center;
+      background-color: var(--cluster-color);
+      color: #091015;
+      font: 800 12px "Helvetica Neue", Arial, Helvetica, sans-serif;
+    }
+    .meshcore-cluster-icon.accepted {
+      --cluster-color: var(--ok);
+      background-color: rgba(97, 211, 148, 0.48);
+    }
+    .meshcore-cluster-icon.pending {
+      --cluster-color: var(--warn);
+      background-color: rgba(244, 201, 93, 0.48);
+    }
+    .meshcore-cluster-icon.rejected {
+      --cluster-color: var(--error);
+      background-color: rgba(255, 107, 107, 0.48);
+    }
     .legend {
       display: flex;
       gap: 12px;
@@ -259,6 +310,7 @@ const DASHBOARD_HTML = `<!doctype html>
     }
     .dialog-head h2 {
       line-height: 1.2;
+      margin-bottom: 0;
     }
     .dialog-body { padding: 14px; }
     pre {
@@ -352,6 +404,7 @@ const DASHBOARD_HTML = `<!doctype html>
     </div>
   </dialog>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script>
     const state = { dashboard: null, mapFirstRender: true };
     const dialog = document.getElementById("detail-dialog");
@@ -361,19 +414,43 @@ const DASHBOARD_HTML = `<!doctype html>
     const fullscreenButton = document.getElementById("map-fullscreen");
     let leafletMap = null;
     let markerLayer = null;
+    const markerIconCache = new Map();
     document.getElementById("detail-close").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) {
         dialog.close();
       }
     });
-    fullscreenButton.addEventListener("click", async () => {
-      if (!document.fullscreenElement && mapSection.requestFullscreen) {
-        await mapSection.requestFullscreen();
-      } else if (document.exitFullscreen) {
-        await document.exitFullscreen();
-      }
+    function setExpandedMap(expanded) {
+      mapSection.classList.toggle("is-expanded", expanded);
+      document.body.style.overflow = expanded ? "hidden" : "";
+      fullscreenButton.textContent = expanded ? "Exit fullscreen" : "Fullscreen";
       setTimeout(() => leafletMap?.invalidateSize(), 100);
+    }
+
+    fullscreenButton.addEventListener("click", async () => {
+      const cssExpanded = mapSection.classList.contains("is-expanded");
+      if (cssExpanded) {
+        setExpandedMap(false);
+        return;
+      }
+
+      if (document.fullscreenElement && document.exitFullscreen) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      if (mapSection.requestFullscreen) {
+        try {
+          await mapSection.requestFullscreen();
+          return;
+        } catch {
+          setExpandedMap(true);
+          return;
+        }
+      }
+
+      setExpandedMap(true);
     });
     document.addEventListener("fullscreenchange", () => {
       fullscreenButton.textContent = document.fullscreenElement ? "Exit fullscreen" : "Fullscreen";
@@ -435,6 +512,63 @@ const DASHBOARD_HTML = `<!doctype html>
       return "#f4c95d";
     }
 
+    function markerStatus(status) {
+      if (status === "rejected" || status === "accepted") return status;
+      return "pending";
+    }
+
+    function advertNodeType(advertType) {
+      const normalized = String(advertType || "").toUpperCase();
+      if (normalized === "REPEATER") return 2;
+      if (normalized === "ROOM") return 3;
+      return 1;
+    }
+
+    function meshcoreIconSvg(nodeType, color) {
+      if (nodeType === 2) {
+        return '<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill-rule="evenodd" fill="' + color + '" d="m256 512c-141.6 0-256-114.4-256-256 0-141.6 114.4-256 256-256 141.6 0 256 114.4 256 256 0 141.6-114.4 256-256 256z"/><path fill-rule="evenodd" fill="#fff" d="m196.7 284l15-15c-12.5-12.5-18.7-28.7-18.7-43.6 0-16.2 6.2-32.4 18.7-43.7l-15-14.9c-16.2 16.2-24.9 37.4-24.9 58.6 0 21.2 8.7 42.4 24.9 58.6zm147.1-147.1l-15 14.9c19.9 20 29.9 47.4 29.9 73.6 0 26.2-10 53.6-29.9 73.5l15 15c24.9-24.9 36.1-56.1 36.1-88.5 0-32.4-12.5-63.6-36.1-88.5zm-162 14.9l-15-14.9c-23.7 24.9-36.1 56.1-36.1 88.5 0 32.4 12.4 63.6 36.1 88.5l15-15c-20-19.9-29.9-47.3-29.9-73.5 0-26.2 9.9-53.6 29.9-73.6zm132 132.2c16.2-16.2 25-37.4 25-58.6-1.3-21.2-8.8-42.4-25-58.6l-14.9 14.9c12.5 12.5 18.7 28.7 18.7 43.7 0 16.2-6.2 32.4-18.7 43.6zm-27.4-58.6c0-17.2-14-31.1-31.2-31.1-17.2 0-31.1 13.9-31.1 31.1 0 9.5 4.2 17.7 10.8 23.5l-42 126.1h24.9l8.4-24.9h58.2l8.2 24.9h24.9l-42-126.1c6.6-5.8 10.9-14 10.9-23.5zm-52 99.7l20.8-62.3 20.8 62.3z"/></svg>';
+      }
+      if (nodeType === 3) {
+        return '<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill-rule="evenodd" fill="' + color + '" d="m256 512c-141.6 0-256-114.4-256-256 0-141.6 114.4-256 256-256 141.6 0 256 114.4 256 256 0 141.6-114.4 256-256 256z"/><path fill="#fff" d="m256 265.4c20.4 0 38.4 4.9 53 11.2 13.5 6 22 19.5 22 34.2v20.2h-150v-20.1c0-14.8 8.5-28.3 22-34.1 14.6-6.5 32.6-11.4 53-11.4zm-100 3.1c13.8 0 25-11.2 25-25 0-13.7-11.2-25-25-25-13.7 0-25 11.3-25 25 0 13.8 11.3 25 25 25zm14.1 13.8c-4.6-0.8-9.2-1.3-14.1-1.3-12.4 0-24.1 2.6-34.7 7.3-9.3 4-15.3 13-15.3 23.1v19.6h56.3v-20.1c0-10.4 2.8-20.1 7.8-28.6zm185.9-13.8c13.8 0 25-11.2 25-25 0-13.8-11.2-25-25-25-13.8 0-25 11.2-25 25 0 13.8 11.2 25 25 25zm50 42.9c0-10.1-6-19.1-15.2-23.1-10.7-4.7-22.4-7.3-34.8-7.3-4.9 0-9.5 0.5-14.1 1.3 5 8.5 7.8 18.2 7.8 28.6v20.1h56.3zm-150-130.4c20.8 0 37.5 16.8 37.5 37.5 0 20.8-16.8 37.5-37.5 37.5-20.7 0-37.5-16.7-37.5-37.5 0-20.7 16.8-37.5 37.5-37.5z"/></svg>';
+      }
+      return '<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="256" cy="256" r="256" fill="' + color + '"/><circle cx="256" cy="256" r="74" fill="#fff"/></svg>';
+    }
+
+    function markerIcon(advert) {
+      const nodeType = advertNodeType(advert.advertType);
+      const status = markerStatus(advert.status);
+      const color = markerColor(status);
+      const cacheKey = nodeType + "|" + status;
+      const cached = markerIconCache.get(cacheKey);
+      if (cached) return cached;
+      const icon = L.divIcon({
+        html: meshcoreIconSvg(nodeType, color),
+        className: "meshcore-node-icon meshcore-node-type-" + nodeType + " " + status,
+        iconSize: [32, 32],
+        iconAnchor: [17, 17],
+        popupAnchor: [0, -16],
+      });
+      markerIconCache.set(cacheKey, icon);
+      return icon;
+    }
+
+    function clusterStatus(cluster) {
+      const statuses = cluster.getAllChildMarkers().map((marker) => marker.options.dashboardStatus);
+      if (statuses.includes("rejected")) return "rejected";
+      if (statuses.includes("pending")) return "pending";
+      return "accepted";
+    }
+
+    function clusterIcon(cluster) {
+      const count = cluster.getChildCount();
+      const status = clusterStatus(cluster);
+      return L.divIcon({
+        html: "<div><span>" + count + "</span></div>",
+        className: "meshcore-cluster-icon " + status,
+        iconSize: L.point(40, 40),
+      });
+    }
+
     function ensureMap() {
       if (leafletMap || !window.L) return;
       leafletMap = L.map("map", {
@@ -452,7 +586,13 @@ const DASHBOARD_HTML = `<!doctype html>
         maxZoom: 19,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       }).addTo(leafletMap);
-      markerLayer = L.layerGroup().addTo(leafletMap);
+      markerLayer = window.L.markerClusterGroup
+        ? L.markerClusterGroup({
+            disableClusteringAtZoom: 12,
+            chunkedLoading: true,
+            iconCreateFunction: clusterIcon,
+          }).addTo(leafletMap)
+        : L.layerGroup().addTo(leafletMap);
     }
 
     function renderMap(adverts) {
@@ -465,16 +605,13 @@ const DASHBOARD_HTML = `<!doctype html>
       markerLayer.clearLayers();
       const bounds = [];
       for (const advert of adverts) {
-        const color = markerColor(advert.status);
         const name = escapeText(advert.nodeName || advert.nodeKey || "unknown");
         const request = escapeText(advert.requestKey || "no request");
         const detail = escapeText(advert.statusDetail || "");
-        const marker = L.circleMarker([advert.lat, advert.lon], {
-          radius: 7,
-          color: "#ffffff",
-          weight: 1.5,
-          fillColor: color,
-          fillOpacity: 0.92,
+        const marker = L.marker([advert.lat, advert.lon], {
+          icon: markerIcon(advert),
+          title: advert.nodeName || advert.nodeKey || "unknown",
+          dashboardStatus: markerStatus(advert.status),
           interactive: true,
         });
         marker.bindTooltip(
@@ -681,6 +818,7 @@ function advertPayload(advert: DashboardAdvertLocation): unknown {
     requestKey: shortRequestKey(advert.requestId),
     status: advert.status,
     statusDetail: advert.statusDetail,
+    advertType: advert.advertType,
     nodeName: advert.nodeName,
     nodeKey: shortNodeKey(advert.nodePublicKey),
     nodePublicKey: advert.nodePublicKey,
