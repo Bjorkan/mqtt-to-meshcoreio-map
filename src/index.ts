@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
 import mqtt, { type IClientOptions, type MqttClient } from "mqtt";
+import { DashboardState, recordDashboardLog, setActiveDashboardState, type DashboardConfig } from "./dashboard/dashboard-state.js";
+import { startDashboardServer, type DashboardServer } from "./dashboard/dashboard-server.js";
 import {
   formatMapUploadLogLine,
   MeshcoreMapUploader,
@@ -14,11 +17,13 @@ export interface RuntimeConfig {
   reconnectPeriodMs: number;
   connectTimeoutMs: number;
   rejectUnauthorized: boolean;
+  dashboard: DashboardConfig;
   mapUploader: MapUploaderConfig;
 }
 
 export interface Runtime {
   client: MqttClient;
+  dashboard?: DashboardServer;
   sourceFirstSubscribeAttempt: Promise<void>;
   sourceSubscribed: Promise<void>;
   stop(): Promise<void>;
@@ -73,6 +78,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     reconnectPeriodMs: envIntInRange(env.MQTT_RECONNECT_PERIOD_MS, 5000, 250, 300000),
     connectTimeoutMs: envIntInRange(env.MQTT_CONNECT_TIMEOUT_MS, 30000, 1000, 300000),
     rejectUnauthorized: envBool(env.SOURCE_REJECT_UNAUTHORIZED, true),
+    dashboard: {
+      enabled: envBool(env.ENABLE_DASHBOARD, false),
+      port: envIntInRange(env.DASHBOARD_PORT, 80, 1, 65535),
+    },
     mapUploader: {
       enabled: true,
       apiUrl: env.MESHCOREIO_API_URL || "https://map.meshcore.io/api/v1/uploader/node",
@@ -86,11 +95,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   };
 }
 
-function log(message: string): void {
+function log(message: string, source = "runtime"): void {
+  recordDashboardLog(message, "info", source);
   console.log(formatMapUploadLogLine(message));
 }
 
-function warn(message: string): void {
+function warn(message: string, source = "runtime"): void {
+  recordDashboardLog(message, "warn", source);
   console.warn(formatMapUploadLogLine(message));
 }
 
@@ -121,11 +132,66 @@ function buildMqttOptions(config: RuntimeConfig): IClientOptions {
   };
 }
 
+const DEMO_ADVERTS = [
+  { nodeName: "DEMO-STOCKHOLM", lat: 59.3293, lon: 18.0686, type: "repeater" },
+  { nodeName: "DEMO-OSLO", lat: 59.9139, lon: 10.7522, type: "room" },
+  { nodeName: "DEMO-COPENHAGEN", lat: 55.6761, lon: 12.5683, type: "sensor" },
+  { nodeName: "DEMO-BERLIN", lat: 52.52, lon: 13.405, type: "repeater" },
+  { nodeName: "DEMO-AMSTERDAM", lat: 52.3676, lon: 4.9041, type: "room" },
+] as const;
+
+const DEMO_STATUSES = [
+  { status: "ignored", detail: "Demo advert ignored by reader policy." },
+  { status: "queued", detail: "Demo advert is waiting in the upload queue." },
+  { status: "pushed", detail: "Demo advert was pushed to MeshCore.io and answered." },
+  { status: "queued", detail: "Demo advert is currently being handled by a worker." },
+  { status: "ignored", detail: "Demo duplicate advert was ignored." },
+] as const;
+
+function startDashboardDemoAdverts(state: DashboardState): NodeJS.Timeout {
+  const requestIds = DEMO_ADVERTS.map(() => randomUUID());
+  let tick = 0;
+  const publish = () => {
+    DEMO_ADVERTS.forEach((advert, index) => {
+      const demoStatus = DEMO_STATUSES[(index + tick) % DEMO_STATUSES.length];
+      state.recordDemoAdvertLocation({
+        requestId: requestIds[index],
+        status: demoStatus.status,
+        statusDetail: demoStatus.detail,
+        nodeName: advert.nodeName,
+        nodePublicKey: `${String(index + 1).repeat(64)}`.slice(0, 64),
+        advertType: advert.type,
+        observerId: `demo-observer-${index + 1}`,
+        observerName: "DEMO-OBSERVER",
+        lat: advert.lat,
+        lon: advert.lon,
+      });
+    });
+    tick += 1;
+  };
+
+  publish();
+  return setInterval(publish, 4000);
+}
+
 export function startRuntime(
   config: RuntimeConfig,
   dependencies: RuntimeDependencies = {}
 ): Runtime {
-  const uploader = dependencies.mapUploader ?? new MeshcoreMapUploader(config.mapUploader);
+  const dashboardConfig = config.dashboard ?? { enabled: false, port: 80 };
+  const dashboardState = dashboardConfig.enabled ? new DashboardState() : undefined;
+  setActiveDashboardState(dashboardState);
+  const dashboard = dashboardState ? startDashboardServer(dashboardState, dashboardConfig.port) : undefined;
+  if (dashboard) {
+    log(`Dashboard enabled on port ${dashboardConfig.port}.`);
+  }
+  const demoAdverts = dashboardState && envBool(process.env.DASHBOARD_DEMO_ADVERTS, false)
+    ? startDashboardDemoAdverts(dashboardState)
+    : undefined;
+  if (demoAdverts) {
+    log("Dashboard demo adverts enabled.");
+  }
+  const uploader = dependencies.mapUploader ?? new MeshcoreMapUploader(config.mapUploader, { dashboardState });
   const ready = Promise.resolve(uploader.ready).then(() => undefined);
   const connect = dependencies.connect ?? mqtt.connect;
   const client = connect(config.sourceUrl, buildMqttOptions(config));
@@ -145,14 +211,16 @@ export function startRuntime(
   });
 
   client.on("connect", () => {
-    log(`Connected to MQTT source ${safeSourceUrl}.`);
+    dashboardState?.setMqttSourceStatus("connected", `Connected to ${safeSourceUrl}.`);
+    log(`Connected to MQTT source ${safeSourceUrl}.`, "mqtt-reader");
     client.subscribe(config.topicFilter, { qos: 0 }, (error) => {
       if (error) {
         if (!firstSubscribeAttemptSettled) {
           firstSubscribeAttemptSettled = true;
           rejectFirstSubscribeAttempt(error);
         }
-        warn(`Failed to subscribe to ${config.topicFilter}: ${error.message}`);
+        dashboardState?.setMqttSourceStatus("disconnected", `Subscribe failed: ${error.message}`);
+        warn(`Failed to subscribe to ${config.topicFilter}: ${error.message}`, "mqtt-reader");
         return;
       }
 
@@ -164,7 +232,7 @@ export function startRuntime(
         subscribedResolved = true;
         resolveSubscribed();
       }
-      log(`Subscribed to ${config.topicFilter}.`);
+      log(`Subscribed to ${config.topicFilter}.`, "mqtt-reader");
     });
   });
 
@@ -172,29 +240,40 @@ export function startRuntime(
     ready
       .then(() => uploader.handleMqttMessage(topic, Buffer.from(payload)))
       .catch((error: Error) => {
-        warn(`Map upload handling failed for ${topic}: ${error.message}`);
+        warn(`Map upload handling failed for ${topic}: ${error.message}`, "mqtt-reader");
       });
   });
 
   client.on("error", (error) => {
-    warn(`MQTT source error: ${error.message}`);
+    const message = error.message || "Connection failed.";
+    dashboardState?.setMqttSourceStatus("disconnected", message);
+    warn(`MQTT source error: ${message}`, "mqtt-reader");
   });
 
   client.on("close", () => {
-    warn("MQTT source connection closed.");
+    dashboardState?.setMqttSourceStatus("disconnected", "MQTT source connection closed.");
   });
 
   client.on("offline", () => {
-    warn("MQTT source is offline.");
+    dashboardState?.setMqttSourceStatus("disconnected", "MQTT source is offline.");
+    warn("MQTT source is offline.", "mqtt-reader");
   });
 
   return {
     client,
+    dashboard,
     sourceFirstSubscribeAttempt,
     sourceSubscribed,
-    stop: () => new Promise<void>((resolve) => {
-      client.end(true, {}, () => resolve());
-    }),
+    stop: async () => {
+      await new Promise<void>((resolve) => {
+        client.end(true, {}, () => resolve());
+      });
+      if (demoAdverts) {
+        clearInterval(demoAdverts);
+      }
+      await dashboard?.close();
+      setActiveDashboardState(undefined);
+    },
   };
 }
 

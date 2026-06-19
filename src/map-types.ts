@@ -1,3 +1,5 @@
+import type { DashboardState } from "./dashboard/dashboard-state.js";
+
 export interface MapUploaderConfig {
   enabled: boolean;
   apiUrl: string;
@@ -15,6 +17,7 @@ export interface MapUploadSigningIdentity {
 }
 
 export interface MapUploaderDependencies {
+  dashboardState?: DashboardState;
   fetch?: typeof fetch;
   now?: () => number;
   signingIdentity?: MapUploadSigningIdentity;

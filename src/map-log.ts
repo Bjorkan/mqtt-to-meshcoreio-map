@@ -1,3 +1,5 @@
+import { recordDashboardLog } from "./dashboard/dashboard-state.js";
+
 const MAX_LOG_BODY_CHARS = 500;
 const MAX_LOG_VALUE_CHARS = 240;
 const MAP_UPLOAD_LOG_COLOR = "\x1b[36m";
@@ -98,9 +100,11 @@ export function formatMapUploadLogLine(message: string, date = new Date()): stri
 }
 
 export function logMapUpload(message: string): void {
+  recordDashboardLog(message, "info");
   console.log(formatMapUploadLogLine(message));
 }
 
 export function warnMapUpload(message: string): void {
+  recordDashboardLog(message, "warn");
   console.warn(formatMapUploadLogLine(message));
 }

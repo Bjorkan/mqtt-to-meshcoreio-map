@@ -16,6 +16,7 @@ The service consumes MQTT observer messages, validates MeshCore packet data, sig
 - Skips chat adverts, invalid packets, stale replays, and too-frequent reuploads.
 - Generates a new ephemeral MeshCore.io upload identity for each worker on each start.
 - Logs generated public keys, but never logs private keys.
+- Can expose an optional read-only in-memory dashboard with reader decisions, queue state, worker state, and advert coordinates from the last hour.
 
 Internally this is split into three responsibilities:
 
@@ -46,10 +47,32 @@ Important runtime settings:
 - `MESHCOREIO_RETRIES_ALLOWED`: retry budget placed on each new queue work request. Default: `3`.
 - `MESHCOREIO_REQUEST_TIMEOUT_MS`: HTTP timeout for MeshCore.io requests. Default: `10000`.
 - `MESHCOREIO_MIN_REUPLOAD_SECONDS`: minimum accepted advert timestamp gap per advertised node. Default: `3600`.
+- `ENABLE_DASHBOARD`: enable the read-only dashboard. Default: `false`.
+- `DASHBOARD_PORT`: internal dashboard listen port. Default: `80`.
 
 Each worker creates its own ephemeral MeshCore.io signing identity at startup. In dry-run mode, workers still drain and validate queue work but do not make the final HTTP request to MeshCore.io. Failed MeshCore.io upload attempts are placed at the back of the global queue with one retry removed from the request. After each upload job, the worker waits 5 seconds before taking another queued request. If the queue is full or the request has no retries left, the request is dropped.
 
 Numeric environment variables are range-checked. Invalid, negative, zero-where-not-allowed, or unreasonably large values fall back to safe defaults.
+
+## Dashboard
+
+Set `ENABLE_DASHBOARD=true` to serve a small read-only dashboard from the same process. It keeps data in memory only and clears everything on restart. The dashboard shows:
+
+- MQTT reader decisions and map upload logs.
+- Current queued and active advert upload jobs, with clickable JSON details.
+- Worker state and the job each worker is handling.
+- A read-only OpenStreetMap view for adverts with lat/lon received during the last hour.
+
+The browser renders the dashboard from a single read-only JSON endpoint at `/api`.
+
+In Docker Compose, publish the internal dashboard port `80` to host port `6543`:
+
+```yaml
+ports:
+  - "6543:80"
+```
+
+Then open `http://localhost:6543`.
 
 ## Deployment
 
