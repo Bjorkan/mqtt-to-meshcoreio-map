@@ -66,9 +66,9 @@ test("dashboard serves HTML at root and index", async () => {
       // Inline SVG icons (adapted from meshcore-dev/map.meshcore.io, MIT licence)
       assert.match(body, /NODE_TYPE_SVGS/);
       assert.match(body, /STATUS_COLORS/);
-      // Repeater icon (type 2) contains distinctive antenna path
+      // Repeater icon (type 2): distinctive opening coordinate of the antenna path
       assert.match(body, /m196\.7 284/);
-      // Room-server icon (type 3) contains distinctive group path
+      // Room-server icon (type 3): distinctive opening coordinate of the group/people path
       assert.match(body, /m256 265\.4/);
       // Status colours match site palette
       assert.match(body, /accepted.*#61d394|#61d394.*accepted/);
