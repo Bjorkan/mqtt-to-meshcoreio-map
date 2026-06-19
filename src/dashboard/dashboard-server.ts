@@ -17,7 +17,7 @@ const NODE_TYPE_COLOR_PLACEHOLDER = "__NODE_TYPE_FILL__";
 
 function readNodeTypeSvgTemplate(nodeType: 1 | 2 | 3 | 4): string {
   const template = readFileSync(path.join(DASHBOARD_ASSETS_DIR, `${nodeType}.svg`), "utf8").trim();
-  const colorizedTemplate = template.replace(".a{fill:#667b89}", `.a{fill:${NODE_TYPE_COLOR_PLACEHOLDER}}`);
+  const colorizedTemplate = template.replaceAll(".a{fill:#667b89}", `.a{fill:${NODE_TYPE_COLOR_PLACEHOLDER}}`);
   if (colorizedTemplate === template) {
     throw new Error(`Dashboard node type SVG ${nodeType}.svg is missing the expected fill style.`);
   }
