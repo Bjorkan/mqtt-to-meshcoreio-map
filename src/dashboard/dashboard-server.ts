@@ -13,9 +13,16 @@ import type {
 const MAX_API_EVENTS = 100;
 const DASHBOARD_POLL_INTERVAL_MS = 2000;
 const DASHBOARD_ASSETS_DIR = fileURLToPath(new URL("./assets/node_types/", import.meta.url));
+const NODE_TYPE_COLOR_PLACEHOLDER = "__NODE_TYPE_FILL__";
 
 function readNodeTypeSvgTemplate(nodeType: 1 | 2 | 3 | 4): string {
-  return readFileSync(path.join(DASHBOARD_ASSETS_DIR, `${nodeType}.svg`), "utf8").trim();
+  const template = readFileSync(path.join(DASHBOARD_ASSETS_DIR, `${nodeType}.svg`), "utf8").trim();
+  const colorizedTemplate = template.replace(".a{fill:#667b89}", `.a{fill:${NODE_TYPE_COLOR_PLACEHOLDER}}`);
+  if (colorizedTemplate === template) {
+    throw new Error(`Dashboard node type SVG ${nodeType}.svg is missing the expected fill style.`);
+  }
+
+  return colorizedTemplate;
 }
 
 const NODE_TYPE_SVG_TEMPLATES = {
@@ -564,7 +571,7 @@ const DASHBOARD_HTML = `<!doctype html>
     const NODE_TYPE_SVG_TEMPLATES = ${JSON.stringify(NODE_TYPE_SVG_TEMPLATES)};
 
     function tintNodeTypeSvg(template, color) {
-      return String(template || "").replace(/\\.a\\{fill:[^}]+\\}/, '.a{fill:' + color + '}');
+      return String(template || "").replace(${JSON.stringify(NODE_TYPE_COLOR_PLACEHOLDER)}, color);
     }
 
     function markerStatus(status) {
