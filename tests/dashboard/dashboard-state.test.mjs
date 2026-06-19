@@ -133,6 +133,25 @@ test("snapshot prefers a newer pending advert over an older accepted advert for 
   assert.equal(snapshot.advertsLastHour[0].status, "pending");
 });
 
+test("snapshot uses requestId as a deterministic tie-breaker when timestamps and status are equal", () => {
+  const clock = makeClock();
+  const state = new DashboardState({ now: clock.now });
+  const nodePublicKey = "d".repeat(64);
+
+  // Both adverts are recorded at exactly the same time with the same status.
+  // "request-z" is lexicographically greater than "request-a", so it should win.
+  const loser = makeJob({ requestId: "request-a-loser", nodePublicKey });
+  recordLocation(state, loser);
+
+  const winner = makeJob({ requestId: "request-z-winner", nodePublicKey });
+  recordLocation(state, winner);
+
+  const snapshot = state.snapshot();
+
+  assert.equal(snapshot.advertsLastHour.length, 1);
+  assert.equal(snapshot.advertsLastHour[0].requestId, winner.requestId);
+});
+
 test("advert locations expire after the last-hour window", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
