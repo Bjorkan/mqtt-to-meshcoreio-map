@@ -359,16 +359,16 @@ const DASHBOARD_HTML = `<!doctype html>
     });
 
     function shortKey(value) {
-      return value ? value.slice(0, 8) : "unknown";
+      return value ? escapeText(value.slice(0, 8)) : "unknown";
     }
 
     function shortRequestId(value) {
-      return value ? value.slice(0, 8) : "no request";
+      return value ? escapeText(value.slice(0, 8)) : "no request";
     }
 
     function formatTime(value) {
       const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString();
+      return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString();
     }
 
     function pillClass(value) {
@@ -497,7 +497,7 @@ const DASHBOARD_HTML = `<!doctype html>
 
     function renderLogs(logs) {
       const target = document.getElementById("logs");
-      target.innerHTML = logs.map((log) => '<div class="log ' + log.level + '"><span class="muted">' + formatTime(log.at) + ' ' + escapeText(log.source) + '</span> ' + escapeText(log.message) + '</div>').join("") || '<div class="muted">No reader decisions yet.</div>';
+      target.innerHTML = logs.map((log) => '<div class="log ' + escapeText(log.level) + '"><span class="muted">' + formatTime(log.at) + ' ' + escapeText(log.source) + '</span> ' + escapeText(log.message) + '</div>').join("") || '<div class="muted">No reader decisions yet.</div>';
     }
 
     function renderWorkers(workers) {
@@ -505,7 +505,7 @@ const DASHBOARD_HTML = `<!doctype html>
       target.innerHTML = workers.map((worker, index) => {
         const job = worker.currentJob;
         const label = job ? escapeText(job.nodeName + " · " + shortRequestId(job.requestId) + " · " + shortKey(job.nodePublicKey)) : "No active job";
-        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>Worker ' + shortRequestId(worker.id) + '</strong><span class="pill ' + pillClass(worker.state) + '">' + worker.state + '</span></div><div class="muted">' + label + '</div></button>';
+        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>Worker ' + shortRequestId(worker.id) + '</strong><span class="pill ' + pillClass(worker.state) + '">' + escapeText(worker.state) + '</span></div><div class="muted">' + label + '</div></button>';
       }).join("") || '<div class="muted">No workers configured.</div>';
       target.querySelectorAll("button").forEach((button) => {
         button.addEventListener("click", () => {
@@ -520,7 +520,7 @@ const DASHBOARD_HTML = `<!doctype html>
       target.innerHTML = queue.map((item, index) => {
         const job = item.job;
         const position = item.position === null ? "active" : "#" + item.position;
-        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + item.state + '</span></div><div class="muted">request ' + shortRequestId(job.requestId) + ' · ' + escapeText(job.advertType) + ' ' + shortKey(job.nodePublicKey) + ' · ' + position + '</div></button>';
+        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">request ' + shortRequestId(job.requestId) + ' · ' + escapeText(job.advertType) + ' ' + shortKey(job.nodePublicKey) + ' · ' + position + '</div></button>';
       }).join("") || '<div class="muted">Queue is empty.</div>';
       target.querySelectorAll("button").forEach((button) => {
         button.addEventListener("click", () => {
