@@ -8,6 +8,7 @@ import type {
 } from "./dashboard-state.js";
 
 const MAX_API_EVENTS = 100;
+const DASHBOARD_POLL_INTERVAL_MS = 2000;
 
 const DASHBOARD_HTML = `<!doctype html>
 <html lang="en">
@@ -54,6 +55,15 @@ const DASHBOARD_HTML = `<!doctype html>
     h1 { font-size: 19px; letter-spacing: 0; }
     h2 { font-size: 16px; margin-bottom: 12px; }
     h3 { font-size: 14px; margin-bottom: 8px; }
+    .dashboard-error {
+      margin: 0 16px 16px;
+      padding: 10px 14px;
+      border: 1px solid rgba(255, 107, 107, 0.55);
+      border-radius: 8px;
+      background: rgba(86, 20, 25, 0.55);
+      color: var(--error);
+    }
+    .dashboard-error:empty { display: none; }
     .section-head {
       display: flex;
       align-items: center;
@@ -346,6 +356,21 @@ const DASHBOARD_HTML = `<!doctype html>
       .panels > section { height: 360px; }
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
+    @media (max-width: 640px) {
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      main { padding: 12px; }
+      section { padding: 12px; }
+      .dashboard-error { margin: 0 12px 12px; }
+      .stats { grid-template-columns: 1fr; }
+      .map-tools { align-items: flex-start; }
+      .map {
+        height: min(420px, 52vh);
+        min-height: 280px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -353,6 +378,7 @@ const DASHBOARD_HTML = `<!doctype html>
     <h1>MQTT to Meshcore.io Map Dashboard</h1>
     <div class="muted" id="updated">Waiting for data</div>
   </header>
+  <div class="dashboard-error" id="dashboard-error" role="status" aria-live="polite"></div>
   <main>
     <div class="stats">
       <div class="stat"><strong id="stat-queue">0</strong><span>Queued to be pushed to Meshcore.io</span></div>
@@ -388,7 +414,7 @@ const DASHBOARD_HTML = `<!doctype html>
           <span class="rejected">rejected without Meshcore.io handling</span>
         </div>
       </div>
-      <div class="map" id="map" role="img" aria-label="Advert flow locations from the last hour"></div>
+      <div class="map" id="map" tabindex="0" aria-label="Advert flow locations from the last hour"></div>
     </section>
     <section>
       <div class="section-head">
@@ -409,16 +435,19 @@ const DASHBOARD_HTML = `<!doctype html>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script>
-    const state = { dashboard: null, mapFirstRender: true, renderKeys: new Map() };
+    const POLL_INTERVAL_MS = ${DASHBOARD_POLL_INTERVAL_MS};
+    const state = { dashboard: null, mapFirstRender: true, renderKeys: new Map(), pollTimer: null };
     const dialog = document.getElementById("detail-dialog");
     const detailTitle = document.getElementById("detail-title");
     const detailBody = document.getElementById("detail-body");
     const mapSection = document.getElementById("map-section");
     const fullscreenButton = document.getElementById("map-fullscreen");
+    const errorBanner = document.getElementById("dashboard-error");
     const markerIconCache = new Map();
     const markerRecords = new Map();
     let leafletMap = null;
     let markerLayer = null;
+    let refreshInFlight = false;
 
     document.getElementById("detail-close").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => {
@@ -474,8 +503,8 @@ const DASHBOARD_HTML = `<!doctype html>
       );
     }
 
-    function renderWhenChanged(key, value, element, render) {
-      const nextKey = fingerprint(value);
+    function renderWhenChanged(key, value, element, render, signature = fingerprint(value)) {
+      const nextKey = signature;
       if (state.renderKeys.get(key) === nextKey) return;
       if (selectionTouches(element)) return;
       render();
@@ -485,6 +514,14 @@ const DASHBOARD_HTML = `<!doctype html>
     function setTextIfChanged(id, value) {
       const element = document.getElementById(id);
       if (element && element.textContent !== value) element.textContent = value;
+    }
+
+    function setRefreshError(message) {
+      if (errorBanner.textContent !== message) errorBanner.textContent = message;
+    }
+
+    function clearRefreshError() {
+      if (errorBanner.textContent) errorBanner.textContent = "";
     }
 
     function formatTime(value) {
@@ -609,7 +646,9 @@ const DASHBOARD_HTML = `<!doctype html>
     }
 
     function markerKey(advert) {
-      return [advert.requestKey || "", advert.nodeKey || "", advert.nodePublicKey || ""].join("|");
+      const stableParts = [advert.requestKey || "", advert.nodeKey || "", advert.nodePublicKey || ""];
+      if (stableParts.some(Boolean)) return stableParts.join("|");
+      return ["fallback", advert.nodeName || "", advert.advertType || "", advert.lat, advert.lon].join("|");
     }
 
     function markerFingerprint(advert) {
@@ -715,14 +754,23 @@ const DASHBOARD_HTML = `<!doctype html>
     function renderLogs(logs) {
       const target = document.getElementById("logs");
       const entries = (logs || []).slice(0, 100);
+      const signature = entries.map((log) => [log.at, log.level, log.source, log.message].join("|")).join("\n");
       renderWhenChanged("logs", entries, target, () => {
         target.innerHTML = entries.map((log) => '<div class="log ' + escapeText(log.level) + '"><span class="muted">' + formatTime(log.at) + ' ' + escapeText(log.source) + '</span> ' + escapeText(log.message) + '</div>').join("") || '<div class="muted">No dashboard events yet.</div>';
-      });
+      }, signature);
     }
 
     function renderWorkers(workers) {
       const target = document.getElementById("workers");
-      renderWhenChanged("workers", workers || [], target, () => {
+      const items = workers || [];
+      const signature = items.map((worker) => [
+        worker.workerKey,
+        worker.state,
+        worker.currentJob?.requestKey || "",
+        worker.currentJob?.nodeKey || "",
+        worker.currentJob?.nodeName || "",
+      ].join("|")).join("\n");
+      renderWhenChanged("workers", items, target, () => {
         target.innerHTML = (workers || []).map((worker, index) => {
           const job = worker.currentJob;
           const label = job ? escapeText(job.nodeName + " / " + job.requestKey + " / " + job.nodeKey) : "No active job";
@@ -734,12 +782,20 @@ const DASHBOARD_HTML = `<!doctype html>
             showDetail("Worker " + wrk.workerKey, resolveDetail(wrk.currentJob?.requestKey) || wrk);
           });
         });
-      });
+      }, signature);
     }
 
     function renderQueue(queue) {
       const target = document.getElementById("queue");
-      renderWhenChanged("queue", queue || [], target, () => {
+      const items = queue || [];
+      const signature = items.map((item) => [
+        item.state,
+        item.job?.requestKey || "",
+        item.job?.nodeKey || "",
+        item.job?.nodeName || "",
+        item.job?.advertType || "",
+      ].join("|")).join("\n");
+      renderWhenChanged("queue", items, target, () => {
         target.innerHTML = (queue || []).map((item, index) => {
           const job = item.job;
           return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">request ' + escapeText(job.requestKey) + ' / ' + escapeText(job.advertType) + ' ' + escapeText(job.nodeKey) + '</div></button>';
@@ -750,12 +806,20 @@ const DASHBOARD_HTML = `<!doctype html>
             showDetail(item.job?.nodeName || "Queue item", resolveDetail(item.job?.requestKey) || item);
           });
         });
-      });
+      }, signature);
     }
 
     function renderHistory(history) {
       const target = document.getElementById("history-list");
-      renderWhenChanged("history", history || [], target, () => {
+      const items = history || [];
+      const signature = items.map((item) => [
+        item.updatedAt,
+        item.state,
+        item.responseSummary || "",
+        item.job?.requestKey || "",
+        item.job?.nodeKey || "",
+      ].join("|")).join("\n");
+      renderWhenChanged("history", items, target, () => {
         if (!history || history.length === 0) {
           target.innerHTML = '<div class="muted" style="text-align:center;padding:20px">No completed adverts yet.</div>';
           return;
@@ -779,7 +843,7 @@ const DASHBOARD_HTML = `<!doctype html>
             showDetail(item.job?.nodeName || "History item", resolveDetail(item.job?.requestKey) || item);
           });
         });
-      });
+      }, signature);
     }
 
     function showDetail(title, value) {
@@ -793,21 +857,42 @@ const DASHBOARD_HTML = `<!doctype html>
       if (!response.ok) throw new Error("Dashboard API returned " + response.status);
       const snapshot = await response.json();
       state.dashboard = snapshot;
+      clearRefreshError();
       renderStats(snapshot);
       renderMqttStatus(snapshot.reader.mqttSource);
-      renderWhenChanged("map", snapshot.map.advertsLastHour || [], document.getElementById("map"), () => renderMap(snapshot.map.advertsLastHour || []));
+      const adverts = snapshot.map.advertsLastHour || [];
+      const mapSignature = adverts.map((advert) => markerKey(advert) + "|" + markerFingerprint(advert)).join("\n");
+      renderWhenChanged("map", adverts, document.getElementById("map"), () => renderMap(adverts), mapSignature);
       renderLogs(snapshot.reader.events || []);
       renderWorkers(snapshot.worker.workers || []);
       renderQueue(snapshot.queue.items || []);
       renderHistory(snapshot.queue.history || []);
     }
 
-    refresh().catch((error) => {
-      document.getElementById("updated").textContent = error.message;
-    });
-    setInterval(() => refresh().catch((error) => {
-      document.getElementById("updated").textContent = error.message;
-    }), 2000);
+    function scheduleRefresh(delay) {
+      window.clearTimeout(state.pollTimer);
+      state.pollTimer = window.setTimeout(runRefreshLoop, delay);
+    }
+
+    async function runRefreshLoop() {
+      if (refreshInFlight) {
+        scheduleRefresh(POLL_INTERVAL_MS);
+        return;
+      }
+      refreshInFlight = true;
+      try {
+        await refresh();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        document.getElementById("updated").textContent = "Update failed";
+        setRefreshError("Live update failed: " + message + ". Retrying automatically.");
+      } finally {
+        refreshInFlight = false;
+        scheduleRefresh(POLL_INTERVAL_MS);
+      }
+    }
+
+    runRefreshLoop();
   </script>
 </body>
 </html>`;

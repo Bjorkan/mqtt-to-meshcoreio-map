@@ -66,14 +66,23 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /--ok: #61d394/);
       assert.match(body, /--warn: #f4c95d/);
       assert.match(body, /--error: #ff6b6b/);
+      assert.match(body, /class="dashboard-error" id="dashboard-error" role="status" aria-live="polite"/);
+      assert.match(body, /const POLL_INTERVAL_MS = 2000;/);
       assert.match(body, /function setExpandedMap/);
       assert.match(body, /mapSection\.classList\.toggle\("is-expanded"/);
       assert.match(body, /100dvh/);
-      assert.match(body, /return \[advert\.requestKey \|\| "", advert\.nodeKey \|\| "", advert\.nodePublicKey \|\| ""\]\.join\("\|"\);/);
+      assert.match(body, /if \(stableParts\.some\(Boolean\)\) return stableParts\.join\("\|"\);/);
+      assert.match(body, /return \["fallback", advert\.nodeName \|\| "", advert\.advertType \|\| "", advert\.lat, advert\.lon\]\.join\("\|"\);/);
       assert.match(body, /marker\.bindTooltip/);
       assert.match(body, /showDetail\("Marker: "/);
+      assert.match(body, /function scheduleRefresh\(delay\)/);
+      assert.match(body, /window\.setTimeout\(runRefreshLoop, delay\)/);
+      assert.match(body, /renderWhenChanged\("map", adverts, document\.getElementById\("map"\), \(\) => renderMap\(adverts\), mapSignature\)/);
+      assert.match(body, /Live update failed: /);
       assert.doesNotMatch(body, /function markerColor/);
+      assert.doesNotMatch(body, /role="img"/);
       assert.doesNotMatch(body, /marker\.bindPopup/);
+      assert.doesNotMatch(body, /setInterval\(/);
       assert.doesNotMatch(body, /table\.node-info/);
     }
   });
