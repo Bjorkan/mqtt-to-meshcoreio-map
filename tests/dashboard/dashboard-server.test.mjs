@@ -62,6 +62,9 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /function clusterStatus/);
       assert.match(body, /meshcore-cluster-icon/);
       assert.match(body, /meshcore-node-icon/);
+      assert.match(body, /\.meshcore-node-icon\.accepted \{ --marker-color: var\(--ok\); \}/);
+      assert.match(body, /\.meshcore-node-icon\.pending \{ --marker-color: var\(--warn\); \}/);
+      assert.match(body, /\.meshcore-node-icon\.rejected \{ --marker-color: var\(--error\); \}/);
       assert.match(body, /\.leaflet-top, \.leaflet-bottom \{ z-index: 900; \}/);
       assert.match(body, /--ok: #61d394/);
       assert.match(body, /--warn: #f4c95d/);
