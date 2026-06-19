@@ -15,13 +15,11 @@ const DASHBOARD_POLL_INTERVAL_MS = 2000;
 const DASHBOARD_ASSETS_DIR = fileURLToPath(new URL("./assets/node_types/", import.meta.url));
 const NODE_TYPE_COLOR_PLACEHOLDER = "__NODE_TYPE_FILL__";
 
-function readNodeTypeSvgTemplate(nodeType: 1 | 2 | 3 | 4): string {
+function readNodeTypeSvgTemplate(nodeType: 1 | 2 | 3): string {
   const template = readFileSync(path.join(DASHBOARD_ASSETS_DIR, `${nodeType}.svg`), "utf8").trim();
-  const colorizedTemplate = template
-    .split(".a{fill:#667b89}")
-    .join(`.a{fill:${NODE_TYPE_COLOR_PLACEHOLDER}}`);
+  const colorizedTemplate = template.replace(/\.a\{fill:[^}]+\}/, `.a{fill:${NODE_TYPE_COLOR_PLACEHOLDER}}`);
   if (colorizedTemplate === template) {
-    throw new Error(`Dashboard node type SVG ${nodeType}.svg is missing the expected '.a{fill:#667b89}' style.`);
+    throw new Error(`Dashboard node type SVG ${nodeType}.svg is missing a '.a{fill:...}' style rule.`);
   }
 
   return colorizedTemplate;
@@ -31,7 +29,6 @@ const NODE_TYPE_SVG_TEMPLATES = {
   1: readNodeTypeSvgTemplate(1),
   2: readNodeTypeSvgTemplate(2),
   3: readNodeTypeSvgTemplate(3),
-  4: readNodeTypeSvgTemplate(4),
 } as const;
 
 const DASHBOARD_HTML = `<!doctype html>
@@ -567,7 +564,7 @@ const DASHBOARD_HTML = `<!doctype html>
       badge.className = "status-badge " + (state === "connected" ? "connected" : "");
     }
 
-    const STATUS_COLORS = { accepted: '#61d394', pending: '#f4c95d', rejected: '#ff6b6b' };
+    const STATUS_COLORS = { accepted: 'var(--ok)', pending: 'var(--warn)', rejected: 'var(--error)' };
 
     // SVG icons are loaded from vendored files in this repository, adapted from meshcore-dev/map.meshcore.io (MIT licence).
     const NODE_TYPE_SVG_TEMPLATES = ${JSON.stringify(NODE_TYPE_SVG_TEMPLATES)};

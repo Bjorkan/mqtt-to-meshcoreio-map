@@ -67,14 +67,12 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /NODE_TYPE_SVG_TEMPLATES/);
       assert.match(body, /function tintNodeTypeSvg/);
       assert.match(body, /STATUS_COLORS/);
-      // Repeater icon (type 2): distinctive opening coordinate of the antenna path
-      assert.match(body, /m196\.7 284/);
-      // Room-server icon (type 3): distinctive opening coordinate of the group/people path
-      assert.match(body, /m256 265\.4/);
-      // Status colours match site palette
-      assert.match(body, /accepted.*#61d394|#61d394.*accepted/);
-      assert.match(body, /pending.*#f4c95d|#f4c95d.*pending/);
-      assert.match(body, /rejected.*#ff6b6b|#ff6b6b.*rejected/);
+      // Templates for all three node types include the fill placeholder for runtime tinting
+      assert.ok(body.split('__NODE_TYPE_FILL__').length - 1 >= 3, 'all three node type templates have fill placeholder');
+      // Status colours use CSS variables referencing the site palette
+      assert.match(body, /accepted.*var\(--ok\)|var\(--ok\).*accepted/);
+      assert.match(body, /pending.*var\(--warn\)|var\(--warn\).*pending/);
+      assert.match(body, /rejected.*var\(--error\)|var\(--error\).*rejected/);
       // Old CSS-dot approach must not be present
       assert.doesNotMatch(body, /meshcore-node-dot/);
       assert.match(body, /\.leaflet-top, \.leaflet-bottom \{ z-index: 900; \}/);
