@@ -531,8 +531,8 @@ const DASHBOARD_HTML = `<!doctype html>
       const target = document.getElementById("queue");
       target.innerHTML = queue.map((item, index) => {
         const job = item.job;
-        const position = item.position === null ? "active" : "#" + item.position;
-        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">request ' + escapeText(shortRequestId(job.requestId)) + ' / ' + escapeText(job.advertType) + ' ' + escapeText(shortKey(job.nodePublicKey)) + ' / ' + escapeText(position) + '</div></button>';
+        const queuePlace = item.position === null ? 0 : item.position;
+        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">Place in queue ' + escapeText(queuePlace) + ' / request ' + escapeText(shortRequestId(job.requestId)) + ' / ' + escapeText(job.advertType) + ' ' + escapeText(shortKey(job.nodePublicKey)) + '</div></button>';
       }).join("") || '<div class="muted">Queue is empty.</div>';
       target.querySelectorAll("button").forEach((button) => {
         button.addEventListener("click", () => {
