@@ -70,9 +70,9 @@ test("dashboard serves HTML at root and index", async () => {
       // Templates for all three node types include the fill placeholder for runtime tinting
       assert.ok(body.split('__NODE_TYPE_FILL__').length - 1 >= 3, 'all three node type templates have fill placeholder');
       // Status colours use CSS variables referencing the site palette
-      assert.match(body, /accepted.*var\(--ok\)|var\(--ok\).*accepted/);
-      assert.match(body, /pending.*var\(--warn\)|var\(--warn\).*pending/);
-      assert.match(body, /rejected.*var\(--error\)|var\(--error\).*rejected/);
+      assert.match(body, /accepted:\s*'var\(--ok\)'/);
+      assert.match(body, /pending:\s*'var\(--warn\)'/);
+      assert.match(body, /rejected:\s*'var\(--error\)'/);
       // Old CSS-dot approach must not be present
       assert.doesNotMatch(body, /meshcore-node-dot/);
       assert.match(body, /\.leaflet-top, \.leaflet-bottom \{ z-index: 900; \}/);
