@@ -8,6 +8,7 @@ import type {
 } from "./dashboard-state.js";
 
 const MAX_API_EVENTS = 100;
+const DASHBOARD_POLL_INTERVAL_MS = 2000;
 
 const DASHBOARD_HTML = `<!doctype html>
 <html lang="en">
@@ -54,6 +55,15 @@ const DASHBOARD_HTML = `<!doctype html>
     h1 { font-size: 19px; letter-spacing: 0; }
     h2 { font-size: 16px; margin-bottom: 12px; }
     h3 { font-size: 14px; margin-bottom: 8px; }
+    .dashboard-error {
+      margin: 0 16px 16px;
+      padding: 10px 14px;
+      border: 1px solid rgba(255, 107, 107, 0.55);
+      border-radius: 8px;
+      background: rgba(86, 20, 25, 0.55);
+      color: var(--error);
+    }
+    .dashboard-error:empty { display: none; }
     .section-head {
       display: flex;
       align-items: center;
@@ -62,11 +72,7 @@ const DASHBOARD_HTML = `<!doctype html>
       margin-bottom: 12px;
     }
     .section-head h2 { margin-bottom: 0; }
-    main {
-      display: grid;
-      gap: 16px;
-      padding: 16px;
-    }
+    main { display: grid; gap: 16px; padding: 16px; }
     section {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -74,7 +80,6 @@ const DASHBOARD_HTML = `<!doctype html>
       padding: 14px;
       min-width: 0;
     }
-    .stack { display: grid; gap: 16px; }
     .panels {
       display: grid;
       grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.9fr) minmax(280px, 0.9fr);
@@ -142,21 +147,43 @@ const DASHBOARD_HTML = `<!doctype html>
       color: var(--text);
       font-family: inherit;
     }
+    .leaflet-top, .leaflet-bottom { z-index: 900; }
     .leaflet-control-attribution {
       background: rgba(15, 21, 27, 0.82);
       color: var(--muted);
     }
     .leaflet-control-attribution a { color: var(--accent); }
-    .meshcore-node-icon, .meshcore-cluster-icon {
-      background: none;
-      border: 0;
-    }
-    .meshcore-node-icon svg {
+    .meshcore-node-icon, .meshcore-cluster-icon { background: none; border: 0; }
+    .meshcore-node-dot {
       display: block;
-      width: 32px;
-      height: 32px;
-      filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.48));
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--marker-color);
+      border: 2px solid #fff;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55);
     }
+    .meshcore-node-type-2 .meshcore-node-dot::after {
+      content: "";
+      display: block;
+      width: 10px;
+      height: 10px;
+      margin: 7px auto;
+      border: 3px solid #fff;
+      border-radius: 50%;
+    }
+    .meshcore-node-type-3 .meshcore-node-dot::after {
+      content: "";
+      display: block;
+      width: 14px;
+      height: 8px;
+      margin: 9px auto;
+      background: #fff;
+      border-radius: 8px 8px 3px 3px;
+    }
+    .meshcore-node-icon.accepted { --marker-color: var(--ok); }
+    .meshcore-node-icon.pending { --marker-color: var(--warn); }
+    .meshcore-node-icon.rejected { --marker-color: var(--error); }
     .meshcore-cluster-icon {
       background-clip: padding-box;
       border-radius: 20px;
@@ -270,9 +297,6 @@ const DASHBOARD_HTML = `<!doctype html>
       border-color: rgba(97, 211, 148, 0.55);
       color: var(--ok);
     }
-    .land { fill: #1f3441; stroke: #557084; stroke-width: 1.2; }
-    .water-label, .place-label { fill: #6f8391; font-size: 12px; }
-    .place-label { fill: #8fa2ae; font-size: 11px; }
     .logs {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 12px;
@@ -308,10 +332,7 @@ const DASHBOARD_HTML = `<!doctype html>
       padding: 10px 14px;
       border-bottom: 1px solid var(--line);
     }
-    .dialog-head h2 {
-      line-height: 1.2;
-      margin-bottom: 0;
-    }
+    .dialog-head h2 { line-height: 1.2; margin-bottom: 0; }
     .dialog-body { padding: 14px; }
     pre {
       margin: 0;
@@ -329,19 +350,26 @@ const DASHBOARD_HTML = `<!doctype html>
       cursor: pointer;
     }
     .icon-button:hover { border-color: var(--accent); }
-    .history-toggle {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 4px;
-    }
-    #history-list {
-      max-height: 360px;
-    }
+    #history-list { max-height: 360px; }
     @media (max-width: 940px) {
       .panels { grid-template-columns: 1fr; }
       .panels > section { height: 360px; }
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      main { padding: 12px; }
+      section { padding: 12px; }
+      .dashboard-error { margin: 0 12px 12px; }
+      .stats { grid-template-columns: 1fr; }
+      .map-tools { align-items: flex-start; }
+      .map {
+        height: min(420px, 52vh);
+        min-height: 280px;
+      }
     }
   </style>
 </head>
@@ -350,6 +378,7 @@ const DASHBOARD_HTML = `<!doctype html>
     <h1>MQTT to Meshcore.io Map Dashboard</h1>
     <div class="muted" id="updated">Waiting for data</div>
   </header>
+  <div class="dashboard-error" id="dashboard-error" role="status" aria-live="polite"></div>
   <main>
     <div class="stats">
       <div class="stat"><strong id="stat-queue">0</strong><span>Queued to be pushed to Meshcore.io</span></div>
@@ -385,7 +414,7 @@ const DASHBOARD_HTML = `<!doctype html>
           <span class="rejected">rejected without Meshcore.io handling</span>
         </div>
       </div>
-      <div class="map" id="map" role="img" aria-label="Advert flow locations from the last hour"></div>
+      <div class="map" id="map" aria-label="Advert flow locations from the last hour"></div>
     </section>
     <section>
       <div class="section-head">
@@ -406,21 +435,24 @@ const DASHBOARD_HTML = `<!doctype html>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script>
-    const state = { dashboard: null, mapFirstRender: true };
+    const POLL_INTERVAL_MS = ${DASHBOARD_POLL_INTERVAL_MS};
+    const state = { dashboard: null, mapFirstRender: true, renderKeys: new Map(), pollTimer: null };
     const dialog = document.getElementById("detail-dialog");
     const detailTitle = document.getElementById("detail-title");
     const detailBody = document.getElementById("detail-body");
     const mapSection = document.getElementById("map-section");
     const fullscreenButton = document.getElementById("map-fullscreen");
+    const errorBanner = document.getElementById("dashboard-error");
+    const markerIconCache = new Map();
+    const markerRecords = new Map();
     let leafletMap = null;
     let markerLayer = null;
-    const markerIconCache = new Map();
+
     document.getElementById("detail-close").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => {
-      if (event.target === dialog) {
-        dialog.close();
-      }
+      if (event.target === dialog) dialog.close();
     });
+
     function setExpandedMap(expanded) {
       mapSection.classList.toggle("is-expanded", expanded);
       document.body.style.overflow = expanded ? "hidden" : "";
@@ -434,12 +466,10 @@ const DASHBOARD_HTML = `<!doctype html>
         setExpandedMap(false);
         return;
       }
-
       if (document.fullscreenElement && document.exitFullscreen) {
         await document.exitFullscreen();
         return;
       }
-
       if (mapSection.requestFullscreen) {
         try {
           await mapSection.requestFullscreen();
@@ -449,13 +479,49 @@ const DASHBOARD_HTML = `<!doctype html>
           return;
         }
       }
-
       setExpandedMap(true);
     });
+
     document.addEventListener("fullscreenchange", () => {
       fullscreenButton.textContent = document.fullscreenElement ? "Exit fullscreen" : "Fullscreen";
       setTimeout(() => leafletMap?.invalidateSize(), 100);
     });
+
+    function fingerprint(value) {
+      return JSON.stringify(value ?? null);
+    }
+
+    function selectionTouches(element) {
+      const selection = window.getSelection?.();
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+      const anchor = selection.anchorNode;
+      const focus = selection.focusNode;
+      return Boolean(
+        element &&
+        ((anchor && element.contains(anchor)) || (focus && element.contains(focus)))
+      );
+    }
+
+    function renderWhenChanged(key, value, element, render, signature = fingerprint(value)) {
+      const nextKey = signature;
+      if (state.renderKeys.get(key) === nextKey) return;
+      if (selectionTouches(element)) return;
+      render();
+      state.renderKeys.set(key, nextKey);
+    }
+
+    function setTextIfChanged(id, value) {
+      const element = document.getElementById(id);
+      if (element && element.textContent !== value) element.textContent = value;
+    }
+
+    function setRefreshError(message) {
+      if (errorBanner.textContent !== message) errorBanner.textContent = message;
+    }
+
+    function clearRefreshError() {
+      if (errorBanner.textContent) errorBanner.textContent = "";
+    }
 
     function formatTime(value) {
       const date = new Date(value);
@@ -492,24 +558,18 @@ const DASHBOARD_HTML = `<!doctype html>
     }
 
     function renderStats(snapshot) {
-      document.getElementById("stat-queue").textContent = (snapshot.queue.items || []).length;
-      document.getElementById("stat-workers").textContent = (snapshot.worker.workers || []).length;
-      document.getElementById("stat-adverts").textContent = (snapshot.map.advertsLastHour || []).length;
-      document.getElementById("updated").textContent = "Updated " + formatTime(snapshot.generatedAt);
+      setTextIfChanged("stat-queue", String((snapshot.queue.items || []).length));
+      setTextIfChanged("stat-workers", String((snapshot.worker.workers || []).length));
+      setTextIfChanged("stat-adverts", String((snapshot.map.advertsLastHour || []).length));
+      setTextIfChanged("updated", "Updated " + formatTime(snapshot.generatedAt));
     }
 
     function renderMqttStatus(status) {
       const badge = document.getElementById("mqtt-status");
       const state = status?.state || "disconnected";
-      badge.textContent = state;
+      if (badge.textContent !== state) badge.textContent = state;
       badge.title = "";
       badge.className = "status-badge " + (state === "connected" ? "connected" : "");
-    }
-
-    function markerColor(status) {
-      if (status === "rejected") return "#ff6b6b";
-      if (status === "accepted") return "#61d394";
-      return "#f4c95d";
     }
 
     function markerStatus(status) {
@@ -524,25 +584,14 @@ const DASHBOARD_HTML = `<!doctype html>
       return 1;
     }
 
-    function meshcoreIconSvg(nodeType, color) {
-      if (nodeType === 2) {
-        return '<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill-rule="evenodd" fill="' + color + '" d="m256 512c-141.6 0-256-114.4-256-256 0-141.6 114.4-256 256-256 141.6 0 256 114.4 256 256 0 141.6-114.4 256-256 256z"/><path fill-rule="evenodd" fill="#fff" d="m196.7 284l15-15c-12.5-12.5-18.7-28.7-18.7-43.6 0-16.2 6.2-32.4 18.7-43.7l-15-14.9c-16.2 16.2-24.9 37.4-24.9 58.6 0 21.2 8.7 42.4 24.9 58.6zm147.1-147.1l-15 14.9c19.9 20 29.9 47.4 29.9 73.6 0 26.2-10 53.6-29.9 73.5l15 15c24.9-24.9 36.1-56.1 36.1-88.5 0-32.4-12.5-63.6-36.1-88.5zm-162 14.9l-15-14.9c-23.7 24.9-36.1 56.1-36.1 88.5 0 32.4 12.4 63.6 36.1 88.5l15-15c-20-19.9-29.9-47.3-29.9-73.5 0-26.2 9.9-53.6 29.9-73.6zm132 132.2c16.2-16.2 25-37.4 25-58.6-1.3-21.2-8.8-42.4-25-58.6l-14.9 14.9c12.5 12.5 18.7 28.7 18.7 43.7 0 16.2-6.2 32.4-18.7 43.6zm-27.4-58.6c0-17.2-14-31.1-31.2-31.1-17.2 0-31.1 13.9-31.1 31.1 0 9.5 4.2 17.7 10.8 23.5l-42 126.1h24.9l8.4-24.9h58.2l8.2 24.9h24.9l-42-126.1c6.6-5.8 10.9-14 10.9-23.5zm-52 99.7l20.8-62.3 20.8 62.3z"/></svg>';
-      }
-      if (nodeType === 3) {
-        return '<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill-rule="evenodd" fill="' + color + '" d="m256 512c-141.6 0-256-114.4-256-256 0-141.6 114.4-256 256-256 141.6 0 256 114.4 256 256 0 141.6-114.4 256-256 256z"/><path fill="#fff" d="m256 265.4c20.4 0 38.4 4.9 53 11.2 13.5 6 22 19.5 22 34.2v20.2h-150v-20.1c0-14.8 8.5-28.3 22-34.1 14.6-6.5 32.6-11.4 53-11.4zm-100 3.1c13.8 0 25-11.2 25-25 0-13.7-11.2-25-25-25-13.7 0-25 11.3-25 25 0 13.8 11.3 25 25 25zm14.1 13.8c-4.6-0.8-9.2-1.3-14.1-1.3-12.4 0-24.1 2.6-34.7 7.3-9.3 4-15.3 13-15.3 23.1v19.6h56.3v-20.1c0-10.4 2.8-20.1 7.8-28.6zm185.9-13.8c13.8 0 25-11.2 25-25 0-13.8-11.2-25-25-25-13.8 0-25 11.2-25 25 0 13.8 11.2 25 25 25zm50 42.9c0-10.1-6-19.1-15.2-23.1-10.7-4.7-22.4-7.3-34.8-7.3-4.9 0-9.5 0.5-14.1 1.3 5 8.5 7.8 18.2 7.8 28.6v20.1h56.3zm-150-130.4c20.8 0 37.5 16.8 37.5 37.5 0 20.8-16.8 37.5-37.5 37.5-20.7 0-37.5-16.7-37.5-37.5 0-20.7 16.8-37.5 37.5-37.5z"/></svg>';
-      }
-      return '<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="256" cy="256" r="256" fill="' + color + '"/><circle cx="256" cy="256" r="74" fill="#fff"/></svg>';
-    }
-
     function markerIcon(advert) {
       const nodeType = advertNodeType(advert.advertType);
       const status = markerStatus(advert.status);
-      const color = markerColor(status);
       const cacheKey = nodeType + "|" + status;
       const cached = markerIconCache.get(cacheKey);
       if (cached) return cached;
       const icon = L.divIcon({
-        html: meshcoreIconSvg(nodeType, color),
+        html: '<span class="meshcore-node-dot"></span>',
         className: "meshcore-node-icon meshcore-node-type-" + nodeType + " " + status,
         iconSize: [32, 32],
         iconAnchor: [17, 17],
@@ -595,6 +644,71 @@ const DASHBOARD_HTML = `<!doctype html>
         : L.layerGroup().addTo(leafletMap);
     }
 
+    function markerKey(advert) {
+      const stableParts = [advert.requestKey || "", advert.nodeKey || "", advert.nodePublicKey || ""];
+      if (stableParts.some(Boolean)) return stableParts.join("|");
+      return [
+        "fallback",
+        advert.nodeName || "",
+        advert.advertType || "",
+        Number(advert.lat).toFixed(5),
+        Number(advert.lon).toFixed(5),
+      ].join("|");
+    }
+
+    function markerFingerprint(advert) {
+      return fingerprint({
+        requestKey: advert.requestKey,
+        status: markerStatus(advert.status),
+        statusDetail: advert.statusDetail,
+        advertType: advert.advertType,
+        nodeName: advert.nodeName,
+        nodeKey: advert.nodeKey,
+        nodePublicKey: advert.nodePublicKey,
+        lat: advert.lat,
+        lon: advert.lon,
+      });
+    }
+
+    function markerTooltip(advert) {
+      const name = escapeText(advert.nodeName || advert.nodeKey || "unknown");
+      const request = escapeText(advert.requestKey || "no request");
+      const detail = escapeText(advert.statusDetail || "");
+      return '<strong>' + name + '</strong><br>request ' + request + '<br>' +
+        escapeText(advert.status || "pending") + (detail ? '<br>' + detail : '') +
+        '<br>' + advert.lat.toFixed(5) + ', ' + advert.lon.toFixed(5);
+    }
+
+    function updateMarker(marker, advert) {
+      marker.options.dashboardAdvert = advert;
+      marker.options.dashboardStatus = markerStatus(advert.status);
+      marker.setLatLng([advert.lat, advert.lon]);
+      marker.setIcon(markerIcon(advert));
+      marker.options.title = advert.nodeName || advert.nodeKey || "unknown";
+      if (marker.getTooltip()) {
+        marker.setTooltipContent(markerTooltip(advert));
+      } else {
+        marker.bindTooltip(markerTooltip(advert), { permanent: false, direction: "top", opacity: 0.95 });
+      }
+    }
+
+    function createMarker(advert) {
+      const marker = L.marker([advert.lat, advert.lon], {
+        icon: markerIcon(advert),
+        title: advert.nodeName || advert.nodeKey || "unknown",
+        dashboardStatus: markerStatus(advert.status),
+        dashboardAdvert: advert,
+        interactive: true,
+      });
+      marker.bindTooltip(markerTooltip(advert), { permanent: false, direction: "top", opacity: 0.95 });
+      marker.on("click", () => {
+        const current = marker.options.dashboardAdvert || advert;
+        showDetail("Marker: " + (current.nodeName || current.nodeKey || "unknown"), resolveDetail(current.requestKey) || current);
+      });
+      marker.addTo(markerLayer);
+      return marker;
+    }
+
     function renderMap(adverts) {
       ensureMap();
       if (!leafletMap || !markerLayer) {
@@ -602,29 +716,35 @@ const DASHBOARD_HTML = `<!doctype html>
         return;
       }
 
-      markerLayer.clearLayers();
+      const nextKeys = new Set();
       const bounds = [];
       for (const advert of adverts) {
-        const name = escapeText(advert.nodeName || advert.nodeKey || "unknown");
-        const request = escapeText(advert.requestKey || "no request");
-        const detail = escapeText(advert.statusDetail || "");
-        const marker = L.marker([advert.lat, advert.lon], {
-          icon: markerIcon(advert),
-          title: advert.nodeName || advert.nodeKey || "unknown",
-          dashboardStatus: markerStatus(advert.status),
-          interactive: true,
-        });
-        marker.bindTooltip(
-          '<strong>' + name + '</strong><br>request ' + request + '<br>' +
-          escapeText(advert.status || "pending") + (detail ? '<br>' + detail : '') +
-          '<br>' + advert.lat.toFixed(5) + ', ' + advert.lon.toFixed(5),
-          { permanent: false, direction: "top", opacity: 0.95 }
-        );
-        marker.on("click", () => {
-          showDetail("Marker: " + (advert.nodeName || advert.nodeKey || "unknown"), resolveDetail(advert.requestKey) || advert);
-        });
-        marker.addTo(markerLayer);
+        const key = markerKey(advert);
+        const nextFingerprint = markerFingerprint(advert);
+        const existing = markerRecords.get(key);
+        nextKeys.add(key);
         bounds.push([advert.lat, advert.lon]);
+
+        if (existing) {
+          if (existing.fingerprint !== nextFingerprint) {
+            updateMarker(existing.marker, advert);
+            existing.fingerprint = nextFingerprint;
+            markerLayer.refreshClusters?.(existing.marker);
+          }
+          continue;
+        }
+
+        markerRecords.set(key, {
+          marker: createMarker(advert),
+          fingerprint: nextFingerprint,
+        });
+      }
+
+      for (const [key, record] of markerRecords) {
+        if (!nextKeys.has(key)) {
+          markerLayer.removeLayer(record.marker);
+          markerRecords.delete(key);
+        }
       }
 
       if (bounds.length > 0 && state.mapFirstRender) {
@@ -638,63 +758,97 @@ const DASHBOARD_HTML = `<!doctype html>
 
     function renderLogs(logs) {
       const target = document.getElementById("logs");
-      target.innerHTML = (logs || []).slice(0, 100).map((log) => '<div class="log ' + escapeText(log.level) + '"><span class="muted">' + formatTime(log.at) + ' ' + escapeText(log.source) + '</span> ' + escapeText(log.message) + '</div>').join("") || '<div class="muted">No dashboard events yet.</div>';
+      const entries = (logs || []).slice(0, 100);
+      const signature = entries.map((log) => [log.at, log.level, log.source, log.message].join("|")).join("\n");
+      renderWhenChanged("logs", entries, target, () => {
+        target.innerHTML = entries.map((log) => '<div class="log ' + escapeText(log.level) + '"><span class="muted">' + formatTime(log.at) + ' ' + escapeText(log.source) + '</span> ' + escapeText(log.message) + '</div>').join("") || '<div class="muted">No dashboard events yet.</div>';
+      }, signature);
     }
 
     function renderWorkers(workers) {
       const target = document.getElementById("workers");
-      target.innerHTML = workers.map((worker, index) => {
-        const job = worker.currentJob;
-        const label = job ? escapeText(job.nodeName + " / " + job.requestKey + " / " + job.nodeKey) : "No active job";
-        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>Worker ' + escapeText(worker.workerKey) + '</strong><span class="pill ' + pillClass(worker.state) + '">' + escapeText(worker.state) + '</span></div><div class="muted">' + label + '</div></button>';
-      }).join("") || '<div class="muted">No workers configured.</div>';
-      target.querySelectorAll("button").forEach((button) => {
-        button.addEventListener("click", () => {
-          const wrk = workers[Number(button.dataset.index)];
-          showDetail("Worker " + wrk.workerKey, resolveDetail(wrk.currentJob?.requestKey) || wrk);
+      const items = workers || [];
+      const signature = items.map((worker) => [
+        worker.workerKey,
+        worker.state,
+        worker.currentJob?.requestKey || "",
+        worker.currentJob?.nodeKey || "",
+        worker.currentJob?.nodeName || "",
+      ].join("|")).join("\n");
+      renderWhenChanged("workers", items, target, () => {
+        target.innerHTML = (workers || []).map((worker, index) => {
+          const job = worker.currentJob;
+          const label = job ? escapeText(job.nodeName + " / " + job.requestKey + " / " + job.nodeKey) : "No active job";
+          return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>Worker ' + escapeText(worker.workerKey) + '</strong><span class="pill ' + pillClass(worker.state) + '">' + escapeText(worker.state) + '</span></div><div class="muted">' + label + '</div></button>';
+        }).join("") || '<div class="muted">No workers configured.</div>';
+        target.querySelectorAll("button").forEach((button) => {
+          button.addEventListener("click", () => {
+            const wrk = workers[Number(button.dataset.index)];
+            showDetail("Worker " + wrk.workerKey, resolveDetail(wrk.currentJob?.requestKey) || wrk);
+          });
         });
-      });
+      }, signature);
     }
 
     function renderQueue(queue) {
       const target = document.getElementById("queue");
-      target.innerHTML = queue.map((item, index) => {
-        const job = item.job;
-        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">request ' + escapeText(job.requestKey) + ' / ' + escapeText(job.advertType) + ' ' + escapeText(job.nodeKey) + '</div></button>';
-      }).join("") || '<div class="muted">Queue is empty.</div>';
-      target.querySelectorAll("button").forEach((button) => {
-        button.addEventListener("click", () => {
-          const item = queue[Number(button.dataset.index)];
-          showDetail(item.job?.nodeName || "Queue item", resolveDetail(item.job?.requestKey) || item);
+      const items = queue || [];
+      const signature = items.map((item) => [
+        item.state,
+        item.job?.requestKey || "",
+        item.job?.nodeKey || "",
+        item.job?.nodeName || "",
+        item.job?.advertType || "",
+      ].join("|")).join("\n");
+      renderWhenChanged("queue", items, target, () => {
+        target.innerHTML = (queue || []).map((item, index) => {
+          const job = item.job;
+          return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">request ' + escapeText(job.requestKey) + ' / ' + escapeText(job.advertType) + ' ' + escapeText(job.nodeKey) + '</div></button>';
+        }).join("") || '<div class="muted">Queue is empty.</div>';
+        target.querySelectorAll("button").forEach((button) => {
+          button.addEventListener("click", () => {
+            const item = queue[Number(button.dataset.index)];
+            showDetail(item.job?.nodeName || "Queue item", resolveDetail(item.job?.requestKey) || item);
+          });
         });
-      });
+      }, signature);
     }
 
     function renderHistory(history) {
       const target = document.getElementById("history-list");
-      if (!history || history.length === 0) {
-        target.innerHTML = '<div class="muted" style="text-align:center;padding:20px">No completed adverts yet.</div>';
-        return;
-      }
-      target.innerHTML = history.map((item, index) => {
-        const job = item.job;
-        const name = escapeText(job.nodeName || job.nodeKey || "unknown");
-        const type = escapeText(job.advertType);
-        const rid = escapeText(job.requestKey || "");
-        const status = escapeText(item.state);
-        const resp = item.responseSummary ? escapeText(item.responseSummary) : "";
-        return '<button class="item" type="button" data-index="' + index + '">' +
-          '<div class="row"><strong>' + name + '</strong><span class="pill ' + pillClass(item.state) + '">' + status + '</span></div>' +
-          '<div class="row"><span class="muted">' + formatTime(item.updatedAt) + ' · ' + type + '</span><span class="pill">' + rid + '</span></div>' +
-          (resp ? '<div class="row muted" style="margin-top:4px">Response: ' + resp + '</div>' : '') +
-          '</button>';
-      }).join("");
-      target.querySelectorAll("button").forEach((button) => {
-        button.addEventListener("click", () => {
-          const item = history[Number(button.dataset.index)];
-          showDetail(item.job?.nodeName || "History item", resolveDetail(item.job?.requestKey) || item);
+      const items = history || [];
+      const signature = items.map((item) => [
+        item.updatedAt,
+        item.state,
+        item.responseSummary || "",
+        item.job?.requestKey || "",
+        item.job?.nodeKey || "",
+      ].join("|")).join("\n");
+      renderWhenChanged("history", items, target, () => {
+        if (!history || history.length === 0) {
+          target.innerHTML = '<div class="muted" style="text-align:center;padding:20px">No completed adverts yet.</div>';
+          return;
+        }
+        target.innerHTML = history.map((item, index) => {
+          const job = item.job;
+          const name = escapeText(job.nodeName || job.nodeKey || "unknown");
+          const type = escapeText(job.advertType);
+          const rid = escapeText(job.requestKey || "");
+          const status = escapeText(item.state);
+          const resp = item.responseSummary ? escapeText(item.responseSummary) : "";
+          return '<button class="item" type="button" data-index="' + index + '">' +
+            '<div class="row"><strong>' + name + '</strong><span class="pill ' + pillClass(item.state) + '">' + status + '</span></div>' +
+            '<div class="row"><span class="muted">' + formatTime(item.updatedAt) + ' · ' + type + '</span><span class="pill">' + rid + '</span></div>' +
+            (resp ? '<div class="row muted" style="margin-top:4px">Response: ' + resp + '</div>' : '') +
+            '</button>';
+        }).join("");
+        target.querySelectorAll("button").forEach((button) => {
+          button.addEventListener("click", () => {
+            const item = history[Number(button.dataset.index)];
+            showDetail(item.job?.nodeName || "History item", resolveDetail(item.job?.requestKey) || item);
+          });
         });
-      });
+      }, signature);
     }
 
     function showDetail(title, value) {
@@ -708,21 +862,36 @@ const DASHBOARD_HTML = `<!doctype html>
       if (!response.ok) throw new Error("Dashboard API returned " + response.status);
       const snapshot = await response.json();
       state.dashboard = snapshot;
+      clearRefreshError();
       renderStats(snapshot);
       renderMqttStatus(snapshot.reader.mqttSource);
-      renderMap(snapshot.map.advertsLastHour || []);
+      const adverts = snapshot.map.advertsLastHour || [];
+      const mapSignature = adverts.map((advert) => markerKey(advert) + "|" + markerFingerprint(advert)).join("\n");
+      renderWhenChanged("map", adverts, document.getElementById("map"), () => renderMap(adverts), mapSignature);
       renderLogs(snapshot.reader.events || []);
       renderWorkers(snapshot.worker.workers || []);
       renderQueue(snapshot.queue.items || []);
       renderHistory(snapshot.queue.history || []);
     }
 
-    refresh().catch((error) => {
-      document.getElementById("updated").textContent = error.message;
-    });
-    setInterval(() => refresh().catch((error) => {
-      document.getElementById("updated").textContent = error.message;
-    }), 2000);
+    function scheduleRefresh(delay) {
+      window.clearTimeout(state.pollTimer);
+      state.pollTimer = window.setTimeout(runRefreshLoop, delay);
+    }
+
+    async function runRefreshLoop() {
+      try {
+        await refresh();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        document.getElementById("updated").textContent = "Update failed";
+        setRefreshError("Live update failed: " + message + ". Retrying automatically.");
+      } finally {
+        scheduleRefresh(POLL_INTERVAL_MS);
+      }
+    }
+
+    runRefreshLoop();
   </script>
 </body>
 </html>`;
