@@ -51,7 +51,7 @@ function recordLocation(state, job, overrides = {}) {
   });
 }
 
-test("queueHandled leaves advert visible as pushed while archiving queue item", () => {
+test("queueHandled leaves advert visible as accepted while archiving queue item", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
   const job = makeJob();
@@ -68,11 +68,11 @@ test("queueHandled leaves advert visible as pushed while archiving queue item", 
 
   assert.equal(snapshot.advertsLastHour.length, 1);
   assert.equal(snapshot.advertsLastHour[0].requestId, job.requestId);
-  assert.equal(snapshot.advertsLastHour[0].status, "pushed");
+  assert.equal(snapshot.advertsLastHour[0].status, "accepted");
   assert.equal(snapshot.advertsLastHour[0].responseFromMeshcoreIO, '{"code":"NODES_INSERTED"}');
 });
 
-test("queueDropped leaves advert visible as ignored while archiving queue item", () => {
+test("queueDropped leaves advert visible as rejected while archiving queue item", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
   const job = makeJob({ requestId: "request-dropped" });
@@ -89,7 +89,7 @@ test("queueDropped leaves advert visible as ignored while archiving queue item",
 
   assert.equal(snapshot.advertsLastHour.length, 1);
   assert.equal(snapshot.advertsLastHour[0].requestId, job.requestId);
-  assert.equal(snapshot.advertsLastHour[0].status, "ignored");
+  assert.equal(snapshot.advertsLastHour[0].status, "rejected");
   assert.equal(snapshot.advertsLastHour[0].statusDetail, "Upload queue is full.");
 });
 

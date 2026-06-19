@@ -142,11 +142,11 @@ const DEMO_ADVERTS = [
 ] as const;
 
 const DEMO_STATUSES = [
-  { status: "ignored", detail: "Demo advert ignored by reader policy." },
-  { status: "queued", detail: "Demo advert is waiting in the upload queue." },
-  { status: "pushed", detail: "Demo advert was pushed to MeshCore.io and answered." },
-  { status: "queued", detail: "Demo advert is currently being handled by a worker." },
-  { status: "ignored", detail: "Demo duplicate advert was ignored." },
+  { status: "rejected", detail: "Demo advert was rejected before Meshcore.io could handle it." },
+  { status: "pending", detail: "Demo advert is waiting for Meshcore.io handling." },
+  { status: "accepted", detail: "Demo advert was accepted by Meshcore.io." },
+  { status: "pending", detail: "Demo advert is currently being handled by a worker." },
+  { status: "accepted", detail: "Demo advert was accepted as a recent duplicate by Meshcore.io." },
 ] as const;
 
 const DEMO_WORKERS = ["demo-worker-1", "demo-worker-2"];

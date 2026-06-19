@@ -22,7 +22,7 @@ export interface DashboardLogEntry {
 export interface DashboardAdvertLocation {
   id: string;
   requestId: string;
-  status: "heard" | "ignored" | "queued" | "pushed";
+  status: "pending" | "accepted" | "rejected";
   statusDetail?: string;
   at: string;
   updatedAt: string;
@@ -210,7 +210,7 @@ export class DashboardState {
     this.adverts.set(input.requestId, {
       id: input.requestId,
       requestId: input.requestId,
-      status: "heard",
+      status: "pending",
       statusDetail: "Advert heard by MQTT reader.",
       at: this.isoNow(),
       updatedAt: this.isoNow(),
@@ -258,28 +258,28 @@ export class DashboardState {
 
   queueStartedImmediately(job: MapUploadWorkRequest): void {
     this.upsertQueueItem(job, "active", null, undefined, "Started immediately.");
-    this.updateAdvertStatus(job.requestId, "queued", "Started immediately.");
+    this.updateAdvertStatus(job.requestId, "pending", "Started immediately.");
   }
 
   queueAdded(job: MapUploadWorkRequest, position: number): void {
     this.upsertQueueItem(job, "queued", position, undefined, `Waiting at queue position ${position}.`);
-    this.updateAdvertStatus(job.requestId, "queued", `Waiting at queue position ${position}.`);
+    this.updateAdvertStatus(job.requestId, "pending", `Waiting at queue position ${position}.`);
   }
 
   queueRetrying(job: MapUploadWorkRequest, reason: string): void {
     this.upsertQueueItem(job, "retrying", null, undefined, reason);
-    this.updateAdvertStatus(job.requestId, "queued", `Retrying: ${reason}`);
+    this.updateAdvertStatus(job.requestId, "pending", `Retrying: ${reason}`);
   }
 
   queueDropped(job: MapUploadWorkRequest, reason: string): void {
     this.upsertQueueItem(job, "dropped", null, undefined, reason);
-    this.updateAdvertStatus(job.requestId, "ignored", reason);
+    this.updateAdvertStatus(job.requestId, "rejected", reason);
     this.archiveQueueItem(job.requestId);
   }
 
   queueHandled(job: MapUploadWorkRequest, responseFromMeshcoreIO?: string): void {
     this.upsertQueueItem(job, "handled", null, undefined, "Handled.", responseFromMeshcoreIO);
-    this.updateAdvertStatus(job.requestId, "pushed", "MeshCore.io handled the upload request.", responseFromMeshcoreIO);
+    this.updateAdvertStatus(job.requestId, "accepted", "MeshCore.io handled the upload request.", responseFromMeshcoreIO);
     this.archiveQueueItem(job.requestId);
   }
 
@@ -295,7 +295,7 @@ export class DashboardState {
   }
 
   advertIgnored(requestId: string, reason: string): void {
-    this.updateAdvertStatus(requestId, "ignored", reason);
+    this.updateAdvertStatus(requestId, "rejected", reason);
   }
 
   workerUploading(workerId: string, job: MapUploadWorkRequest): void {
@@ -308,7 +308,7 @@ export class DashboardState {
       currentJob: toJobSnapshot(job),
     });
     this.upsertQueueItem(job, "active", null, workerId, `Worker ${workerId} is uploading.`);
-    this.updateAdvertStatus(job.requestId, "queued", `Worker ${workerId} is uploading.`);
+    this.updateAdvertStatus(job.requestId, "pending", `Worker ${workerId} is uploading.`);
   }
 
   workerCooldown(workerId: string, job: MapUploadWorkRequest): void {

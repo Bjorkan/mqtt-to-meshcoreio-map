@@ -147,9 +147,9 @@ const DASHBOARD_HTML = `<!doctype html>
       background: var(--accent);
       display: inline-block;
     }
-    .legend .ignored::before { background: var(--error); }
-    .legend .queued::before { background: var(--warn); }
-    .legend .pushed::before { background: var(--ok); }
+    .legend .rejected::before { background: var(--error); }
+    .legend .pending::before { background: var(--warn); }
+    .legend .accepted::before { background: var(--ok); }
     .list {
       display: grid;
       gap: 8px;
@@ -321,9 +321,9 @@ const DASHBOARD_HTML = `<!doctype html>
       </div>
       <div class="map-tools">
         <div class="legend">
-          <span class="ignored">ignored</span>
-          <span class="queued">queued</span>
-          <span class="pushed">pushed to MeshCore.io</span>
+          <span class="pending">pending Meshcore.io response</span>
+          <span class="accepted">accepted by Meshcore.io</span>
+          <span class="rejected">rejected without Meshcore.io handling</span>
         </div>
       </div>
       <div class="map" id="map" role="img" aria-label="Advert flow locations from the last hour"></div>
@@ -441,10 +441,9 @@ const DASHBOARD_HTML = `<!doctype html>
     }
 
     function markerColor(status) {
-      if (status === "ignored") return "#ff6b6b";
-      if (status === "queued") return "#f4c95d";
-      if (status === "pushed") return "#61d394";
-      return "#63b3ed";
+      if (status === "rejected") return "#ff6b6b";
+      if (status === "accepted") return "#61d394";
+      return "#f4c95d";
     }
 
     function ensureMap() {
@@ -491,7 +490,7 @@ const DASHBOARD_HTML = `<!doctype html>
         });
         marker.bindTooltip(
           '<strong>' + name + '</strong><br>request ' + request + '<br>' +
-          escapeText(advert.status || "heard") + (detail ? '<br>' + detail : '') +
+          escapeText(advert.status || "pending") + (detail ? '<br>' + detail : '') +
           '<br>' + advert.lat.toFixed(5) + ', ' + advert.lon.toFixed(5),
           { permanent: false, direction: "top", opacity: 0.95 }
         );
