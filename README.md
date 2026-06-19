@@ -92,6 +92,8 @@ docker compose up -d
 
 The Compose example uses the published GitHub Container Registry image, sets `LOG_COLOR=false`, enables log rotation, applies basic container hardening, and uses a conservative `MESHCOREIO_WORKERS=1`.
 
+Images are published to both `ghcr.io/bjorkan/mqtt-to-meshcoreio-map` and `bjorkan/mqtt-to-meshcoreio-map` on Docker Hub. The `edge` tag tracks the latest push to `main`; the `latest` tag tracks the latest published GitHub release.
+
 For testing, the published image can also be run directly with the MQTT settings in the command:
 
 ```bash
