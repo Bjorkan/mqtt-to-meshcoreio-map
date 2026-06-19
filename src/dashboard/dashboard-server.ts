@@ -1,5 +1,13 @@
 import http from "node:http";
-import type { DashboardState } from "./dashboard-state.js";
+import type {
+  DashboardAdvertLocation,
+  DashboardLogEntry,
+  DashboardQueueItem,
+  DashboardState,
+  DashboardWorkerSnapshot,
+} from "./dashboard-state.js";
+
+const MAX_API_EVENTS = 100;
 
 const DASHBOARD_HTML = `<!doctype html>
 <html lang="en">
@@ -372,14 +380,6 @@ const DASHBOARD_HTML = `<!doctype html>
       setTimeout(() => leafletMap?.invalidateSize(), 100);
     });
 
-    function shortKey(value) {
-      return value ? String(value).slice(0, 8) : "unknown";
-    }
-
-    function shortRequestId(value) {
-      return value ? String(value).slice(0, 8) : "no request";
-    }
-
     function formatTime(value) {
       const date = new Date(value);
       return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString();
@@ -405,35 +405,27 @@ const DASHBOARD_HTML = `<!doctype html>
       if (!state.dashboard || !requestId) return null;
       for (const list of [state.dashboard.queue.items, state.dashboard.queue.history]) {
         for (const item of list || []) {
-          if (item.job?.requestId === requestId) return item;
+          if (item.job?.requestKey === requestId) return item;
         }
       }
       for (const advert of state.dashboard.map.advertsLastHour || []) {
-        if (advert.requestId === requestId) return advert;
+        if (advert.requestKey === requestId) return advert;
       }
       return null;
-    }
-
-    function newestGeneratedAt(...payloads) {
-      return payloads
-        .map((payload) => payload?.generatedAt)
-        .filter(Boolean)
-        .sort()
-        .at(-1);
     }
 
     function renderStats(snapshot) {
       document.getElementById("stat-queue").textContent = (snapshot.queue.items || []).length;
       document.getElementById("stat-workers").textContent = (snapshot.worker.workers || []).length;
       document.getElementById("stat-adverts").textContent = (snapshot.map.advertsLastHour || []).length;
-      document.getElementById("updated").textContent = "Updated " + formatTime(newestGeneratedAt(snapshot.reader, snapshot.queue, snapshot.worker, snapshot.map));
+      document.getElementById("updated").textContent = "Updated " + formatTime(snapshot.generatedAt);
     }
 
     function renderMqttStatus(status) {
       const badge = document.getElementById("mqtt-status");
       const state = status?.state || "disconnected";
       badge.textContent = state;
-      badge.title = status?.detail || "";
+      badge.title = "";
       badge.className = "status-badge " + (state === "connected" ? "connected" : "");
     }
 
@@ -474,8 +466,8 @@ const DASHBOARD_HTML = `<!doctype html>
       const bounds = [];
       for (const advert of adverts) {
         const color = markerColor(advert.status);
-        const name = escapeText(advert.nodeName || shortKey(advert.nodePublicKey));
-        const request = escapeText(shortRequestId(advert.requestId));
+        const name = escapeText(advert.nodeName || advert.nodeKey || "unknown");
+        const request = escapeText(advert.requestKey || "no request");
         const detail = escapeText(advert.statusDetail || "");
         const marker = L.circleMarker([advert.lat, advert.lon], {
           radius: 7,
@@ -492,7 +484,7 @@ const DASHBOARD_HTML = `<!doctype html>
           { permanent: false, direction: "top", opacity: 0.95 }
         );
         marker.on("click", () => {
-          showDetail("Marker: " + (advert.nodeName || shortKey(advert.nodePublicKey)), resolveDetail(advert.requestId) || advert);
+          showDetail("Marker: " + (advert.nodeName || advert.nodeKey || "unknown"), resolveDetail(advert.requestKey) || advert);
         });
         marker.addTo(markerLayer);
         bounds.push([advert.lat, advert.lon]);
@@ -516,13 +508,13 @@ const DASHBOARD_HTML = `<!doctype html>
       const target = document.getElementById("workers");
       target.innerHTML = workers.map((worker, index) => {
         const job = worker.currentJob;
-        const label = job ? escapeText(job.nodeName + " / " + shortRequestId(job.requestId) + " / " + shortKey(job.nodePublicKey)) : "No active job";
-        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>Worker ' + escapeText(shortRequestId(worker.id)) + '</strong><span class="pill ' + pillClass(worker.state) + '">' + escapeText(worker.state) + '</span></div><div class="muted">' + label + '</div></button>';
+        const label = job ? escapeText(job.nodeName + " / " + job.requestKey + " / " + job.nodeKey) : "No active job";
+        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>Worker ' + escapeText(worker.workerKey) + '</strong><span class="pill ' + pillClass(worker.state) + '">' + escapeText(worker.state) + '</span></div><div class="muted">' + label + '</div></button>';
       }).join("") || '<div class="muted">No workers configured.</div>';
       target.querySelectorAll("button").forEach((button) => {
         button.addEventListener("click", () => {
           const wrk = workers[Number(button.dataset.index)];
-          showDetail("Worker " + shortRequestId(wrk.id), resolveDetail(wrk.currentJob?.requestId) || wrk);
+          showDetail("Worker " + wrk.workerKey, resolveDetail(wrk.currentJob?.requestKey) || wrk);
         });
       });
     }
@@ -531,24 +523,14 @@ const DASHBOARD_HTML = `<!doctype html>
       const target = document.getElementById("queue");
       target.innerHTML = queue.map((item, index) => {
         const job = item.job;
-        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">request ' + escapeText(shortRequestId(job.requestId)) + ' / ' + escapeText(job.advertType) + ' ' + escapeText(shortKey(job.nodePublicKey)) + '</div></button>';
+        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">request ' + escapeText(job.requestKey) + ' / ' + escapeText(job.advertType) + ' ' + escapeText(job.nodeKey) + '</div></button>';
       }).join("") || '<div class="muted">Queue is empty.</div>';
       target.querySelectorAll("button").forEach((button) => {
         button.addEventListener("click", () => {
           const item = queue[Number(button.dataset.index)];
-          showDetail(item.job?.nodeName || "Queue item", resolveDetail(item.job?.requestId) || item);
+          showDetail(item.job?.nodeName || "Queue item", resolveDetail(item.job?.requestKey) || item);
         });
       });
-    }
-
-    function shortResponse(value) {
-      if (!value) return "";
-      try {
-        const parsed = JSON.parse(value);
-        return escapeText(parsed.code || parsed.message || parsed.error || value.slice(0, 60));
-      } catch {
-        return escapeText(value.slice(0, 60));
-      }
     }
 
     function renderHistory(history) {
@@ -559,11 +541,11 @@ const DASHBOARD_HTML = `<!doctype html>
       }
       target.innerHTML = history.map((item, index) => {
         const job = item.job;
-        const name = escapeText(job.nodeName || shortKey(job.nodePublicKey));
+        const name = escapeText(job.nodeName || job.nodeKey || "unknown");
         const type = escapeText(job.advertType);
-        const rid = escapeText(shortRequestId(job.requestId || ""));
+        const rid = escapeText(job.requestKey || "");
         const status = escapeText(item.state);
-        const resp = shortResponse(item.responseFromMeshcoreIO);
+        const resp = item.responseSummary ? escapeText(item.responseSummary) : "";
         return '<button class="item" type="button" data-index="' + index + '">' +
           '<div class="row"><strong>' + name + '</strong><span class="pill ' + pillClass(item.state) + '">' + status + '</span></div>' +
           '<div class="row"><span class="muted">' + formatTime(item.updatedAt) + ' · ' + type + '</span><span class="pill">' + rid + '</span></div>' +
@@ -573,7 +555,7 @@ const DASHBOARD_HTML = `<!doctype html>
       target.querySelectorAll("button").forEach((button) => {
         button.addEventListener("click", () => {
           const item = history[Number(button.dataset.index)];
-          showDetail(item.job?.nodeName || "History item", resolveDetail(item.job?.requestId) || item);
+          showDetail(item.job?.nodeName || "History item", resolveDetail(item.job?.requestKey) || item);
         });
       });
     }
@@ -592,7 +574,7 @@ const DASHBOARD_HTML = `<!doctype html>
       renderStats(snapshot);
       renderMqttStatus(snapshot.reader.mqttSource);
       renderMap(snapshot.map.advertsLastHour || []);
-      renderLogs(snapshot.reader.events || snapshot.reader.decisions || []);
+      renderLogs(snapshot.reader.events || []);
       renderWorkers(snapshot.worker.workers || []);
       renderQueue(snapshot.queue.items || []);
       renderHistory(snapshot.queue.history || []);
@@ -621,30 +603,111 @@ function writeJson(response: http.ServerResponse, value: unknown): void {
   response.end(JSON.stringify(value));
 }
 
+function shortNodeKey(value: string | undefined): string {
+  return value ? value.slice(0, 8) : "unknown";
+}
+
+function shortRequestKey(value: string | undefined): string {
+  return value ? value.slice(0, 8) : "no request";
+}
+
+function sanitizeEventMessage(value: string): string {
+  return value
+    .replace(/\b(?:mqtts?|wss?):\/\/\S+/gi, "[redacted-url]")
+    .replace(/\b[0-9a-f]{32,}\b/gi, "[redacted-key]");
+}
+
+function summarizeMeshcoreResponse(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as { code?: unknown; message?: unknown; error?: unknown };
+    const summary = parsed.code ?? parsed.message ?? parsed.error;
+    return summary === undefined ? value.slice(0, 80) : String(summary).slice(0, 80);
+  } catch {
+    return value.slice(0, 80);
+  }
+}
+
+function logPayload(log: DashboardLogEntry): unknown {
+  return {
+    at: log.at,
+    level: log.level,
+    message: sanitizeEventMessage(log.message),
+    source: log.source,
+  };
+}
+
+function jobPayload(item: DashboardQueueItem): unknown {
+  return {
+    requestKey: shortRequestKey(item.job.requestId),
+    advertType: item.job.advertType,
+    nodeName: item.job.nodeName,
+    nodeKey: shortNodeKey(item.job.nodePublicKey),
+    nodePublicKey: item.job.nodePublicKey,
+    radioParams: item.job.radioParams,
+  };
+}
+
+function queueItemPayload(item: DashboardQueueItem): unknown {
+  return {
+    state: item.state,
+    updatedAt: item.updatedAt,
+    responseSummary: summarizeMeshcoreResponse(item.responseFromMeshcoreIO),
+    job: jobPayload(item),
+  };
+}
+
+function workerPayload(worker: DashboardWorkerSnapshot): unknown {
+  return {
+    workerKey: shortRequestKey(worker.id),
+    state: worker.state,
+    currentJob: worker.currentJob
+      ? {
+          requestKey: shortRequestKey(worker.currentJob.requestId),
+          nodeName: worker.currentJob.nodeName,
+          nodeKey: shortNodeKey(worker.currentJob.nodePublicKey),
+          nodePublicKey: worker.currentJob.nodePublicKey,
+          radioParams: worker.currentJob.radioParams,
+        }
+      : undefined,
+  };
+}
+
+function advertPayload(advert: DashboardAdvertLocation): unknown {
+  return {
+    requestKey: shortRequestKey(advert.requestId),
+    status: advert.status,
+    statusDetail: advert.statusDetail,
+    nodeName: advert.nodeName,
+    nodeKey: shortNodeKey(advert.nodePublicKey),
+    nodePublicKey: advert.nodePublicKey,
+    lat: advert.lat,
+    lon: advert.lon,
+  };
+}
+
 function dashboardPayload(state: DashboardState): unknown {
   const snapshot = state.snapshot();
   return {
     generatedAt: snapshot.generatedAt,
     reader: {
-      generatedAt: snapshot.generatedAt,
-      mqttSource: snapshot.mqttSource,
-      events: snapshot.logs,
-      decisions: snapshot.logs.filter((log) =>
-        log.source === "mqtt-reader" && !log.message.startsWith("MQTT source error:")
-      ),
+      mqttSource: {
+        state: snapshot.mqttSource.state,
+      },
+      events: snapshot.logs.slice(0, MAX_API_EVENTS).map(logPayload),
     },
     queue: {
-      generatedAt: snapshot.generatedAt,
-      items: snapshot.queue,
-      history: snapshot.queueHistory.slice(0, 100),
+      items: snapshot.queue.map(queueItemPayload),
+      history: snapshot.queueHistory.slice(0, 100).map(queueItemPayload),
     },
     worker: {
-      generatedAt: snapshot.generatedAt,
-      workers: snapshot.workers,
+      workers: snapshot.workers.map(workerPayload),
     },
     map: {
-      generatedAt: snapshot.generatedAt,
-      advertsLastHour: snapshot.advertsLastHour,
+      advertsLastHour: snapshot.advertsLastHour.map(advertPayload),
     },
   };
 }

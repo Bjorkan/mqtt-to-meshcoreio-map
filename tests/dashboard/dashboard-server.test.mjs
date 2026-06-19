@@ -22,6 +22,28 @@ async function withServer(run) {
   }
 }
 
+function makeJob(overrides = {}) {
+  const requestId = overrides.requestId ?? "request-1";
+  const nodePublicKey = overrides.nodePublicKey ?? "a".repeat(64);
+  return {
+    requestId,
+    retriesAllowed: overrides.retriesAllowed ?? 3,
+    advertKey: overrides.advertKey ?? `${nodePublicKey}:1800000000`,
+    advertTimestamp: overrides.advertTimestamp ?? 1_800_000_000,
+    advertType: overrides.advertType ?? "REPEATER",
+    nodeName: overrides.nodeName ?? "SE-STO-TEST",
+    nodePublicKey,
+    rawPacketHex: overrides.rawPacketHex ?? "deadbeef",
+    observerId: overrides.observerId ?? "observer-1",
+    observerName: overrides.observerName ?? "SE-STO-OBSERVER",
+    radioParams: overrides.radioParams ?? { freq: 869.5, bw: 125, sf: 9, cr: 5 },
+    logContext: overrides.logContext ?? {
+      advertLabel: "SE-STO-TEST (aaaaaa)",
+      observerLabel: "SE-STO-OBSERVER",
+    },
+  };
+}
+
 test("dashboard serves HTML at root and index", async () => {
   await withServer(async (url) => {
     for (const path of ["/", "/index.html"]) {
@@ -42,8 +64,9 @@ test("dashboard API returns the expected payload shape", async () => {
 
     assert.equal(response.status, 200);
     assert.equal(body.reader.mqttSource.state, "disconnected");
+    assert.equal(body.reader.mqttSource.detail, undefined);
     assert.equal(body.reader.events.length, 3);
-    assert.equal(body.reader.decisions.length, 1);
+    assert.equal(body.reader.decisions, undefined);
     assert.deepEqual(
       body.reader.events.map((event) => event.source),
       ["runtime", "map-upload", "mqtt-reader"]
@@ -52,6 +75,72 @@ test("dashboard API returns the expected payload shape", async () => {
     assert.deepEqual(body.worker.workers, []);
     assert.deepEqual(body.map.advertsLastHour, []);
   });
+});
+
+test("dashboard API exposes only render-safe fields", async () => {
+  const state = new DashboardState({
+    now: () => new Date("2026-06-19T10:00:00.000Z"),
+  });
+  const job = makeJob();
+  state.recordLog(`Using key ${job.nodePublicKey} from mqtt://broker.local:1883`, "info", "runtime");
+  state.configureWorkers(["worker-1"]);
+  state.recordAdvertLocation({
+    requestId: job.requestId,
+    nodeName: job.nodeName,
+    nodePublicKey: job.nodePublicKey,
+    advertType: job.advertType,
+    advertTimestamp: job.advertTimestamp,
+    observerId: job.observerId,
+    observerName: job.observerName,
+    lat: 59.3293,
+    lon: 18.0686,
+  });
+  state.queueAdded(job, 1);
+  state.workerUploading("worker-1", job);
+  state.queueHandled(job, '{"code":"NODES_INSERTED","message":"accepted"}');
+
+  const server = startDashboardServer(state, 0);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  try {
+    const response = await fetch(`${server.url}/api`);
+    const body = await response.json();
+    const serialized = JSON.stringify(body);
+
+    assert.equal(response.status, 200);
+    assert.equal(body.reader.events[0].message, "Using key [redacted-key] from [redacted-url]");
+    assert.equal(body.queue.history[0].job.requestKey, "request-");
+    assert.equal(body.queue.history[0].job.requestId, undefined);
+    assert.equal(body.queue.history[0].job.nodeKey, "aaaaaaaa");
+    assert.equal(body.queue.history[0].job.nodePublicKey, job.nodePublicKey);
+    assert.deepEqual(body.queue.history[0].job.radioParams, { freq: 869.5, bw: 125, sf: 9, cr: 5 });
+    assert.equal(body.queue.history[0].responseSummary, "NODES_INSERTED");
+    assert.equal(body.map.advertsLastHour[0].requestKey, "request-");
+    assert.equal(body.map.advertsLastHour[0].requestId, undefined);
+    assert.equal(body.map.advertsLastHour[0].nodeKey, "aaaaaaaa");
+    assert.equal(body.map.advertsLastHour[0].nodePublicKey, job.nodePublicKey);
+    assert.equal(body.worker.workers[0].workerKey, "worker-1");
+    assert.equal(body.worker.workers[0].id, undefined);
+    assert.equal(body.worker.workers[0].currentJob.requestKey, "request-");
+    assert.equal(body.worker.workers[0].currentJob.requestId, undefined);
+    assert.equal(body.worker.workers[0].currentJob.nodeKey, "aaaaaaaa");
+    assert.equal(body.worker.workers[0].currentJob.nodePublicKey, job.nodePublicKey);
+    assert.deepEqual(body.worker.workers[0].currentJob.radioParams, { freq: 869.5, bw: 125, sf: 9, cr: 5 });
+    assert.equal(body.queue.history[0].id, undefined);
+    assert.equal(body.queue.history[0].position, undefined);
+    assert.equal(body.queue.history[0].workerId, undefined);
+    assert.equal(body.map.advertsLastHour[0].id, undefined);
+    assert.equal(body.worker.workers[0].updatedAt, undefined);
+    assert.equal(serialized.includes("deadbeef"), false);
+    assert.equal(serialized.includes("rawPacketHex"), false);
+    assert.equal(serialized.includes("advertKey"), false);
+    assert.equal(serialized.includes("retriesAllowed"), false);
+    assert.equal(serialized.includes("observer"), false);
+    assert.equal(serialized.includes("broker.local"), false);
+    assert.equal(serialized.includes("mqtt://"), false);
+  } finally {
+    await server.close();
+  }
 });
 
 test("dashboard health check returns ok", async () => {
