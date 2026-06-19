@@ -63,8 +63,9 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /function clusterStatus/);
       assert.match(body, /meshcore-cluster-icon/);
       assert.match(body, /meshcore-node-icon/);
-      // Inline SVG icons (adapted from meshcore-dev/map.meshcore.io, MIT licence)
-      assert.match(body, /NODE_TYPE_SVGS/);
+      // Vendored SVG icons loaded from local repository assets
+      assert.match(body, /NODE_TYPE_SVG_TEMPLATES/);
+      assert.match(body, /function tintNodeTypeSvg/);
       assert.match(body, /STATUS_COLORS/);
       // Repeater icon (type 2): distinctive opening coordinate of the antenna path
       assert.match(body, /m196\.7 284/);
@@ -95,6 +96,7 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /renderWhenChanged\("map", adverts, document\.getElementById\("map"\), \(\) => renderMap\(adverts\), mapSignature\)/);
       assert.match(body, /Live update failed: /);
       assert.doesNotMatch(body, /function markerColor/);
+      assert.doesNotMatch(body, /NODE_TYPE_SVGS/);
       assert.doesNotMatch(body, /role="img"/);
       assert.doesNotMatch(body, /tabindex="0"/);
       assert.doesNotMatch(body, /marker\.bindPopup/);
