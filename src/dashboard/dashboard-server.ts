@@ -168,11 +168,20 @@ const DASHBOARD_HTML = `<!doctype html>
       cursor: pointer;
     }
     button.item:hover { border-color: var(--accent); }
+    button.item:focus-visible, .close:focus-visible, .icon-button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
     .row {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
+      min-width: 0;
+    }
+    .row > strong, .row > span:first-child, .item .muted {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .muted { color: var(--muted); }
     .pill {
@@ -184,6 +193,7 @@ const DASHBOARD_HTML = `<!doctype html>
       font-size: 12px;
       color: var(--muted);
       white-space: nowrap;
+      flex: 0 0 auto;
     }
     .pill.ok { color: var(--ok); border-color: rgba(97, 211, 148, 0.5); }
     .pill.warn { color: var(--warn); border-color: rgba(244, 201, 93, 0.5); }
@@ -277,7 +287,7 @@ const DASHBOARD_HTML = `<!doctype html>
   </header>
   <main>
     <div class="stats">
-      <div class="stat"><strong id="stat-logs">0</strong><span>MQTT reader decisions</span></div>
+      <div class="stat"><strong id="stat-logs">0</strong><span>dashboard events</span></div>
       <div class="stat"><strong id="stat-queue">0</strong><span>queued or active</span></div>
       <div class="stat"><strong id="stat-workers">0</strong><span>workers</span></div>
       <div class="stat"><strong id="stat-adverts">0</strong><span>adverts with coordinates, last hour</span></div>
@@ -285,7 +295,7 @@ const DASHBOARD_HTML = `<!doctype html>
     <div class="panels">
       <section>
         <div class="section-head">
-          <h2>MQTT Reader Decisions</h2>
+          <h2>Events</h2>
           <span class="status-badge" id="mqtt-status">disconnected</span>
         </div>
         <div class="logs" id="logs"></div>
@@ -331,7 +341,7 @@ const DASHBOARD_HTML = `<!doctype html>
   </dialog>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const state = { selected: null, dashboard: null, mapFirstRender: true };
+    const state = { dashboard: null, mapFirstRender: true };
     const dialog = document.getElementById("detail-dialog");
     const detailTitle = document.getElementById("detail-title");
     const detailBody = document.getElementById("detail-body");
@@ -359,11 +369,11 @@ const DASHBOARD_HTML = `<!doctype html>
     });
 
     function shortKey(value) {
-      return value ? escapeText(value.slice(0, 8)) : "unknown";
+      return value ? String(value).slice(0, 8) : "unknown";
     }
 
     function shortRequestId(value) {
-      return value ? escapeText(value.slice(0, 8)) : "no request";
+      return value ? String(value).slice(0, 8) : "no request";
     }
 
     function formatTime(value) {
@@ -409,10 +419,11 @@ const DASHBOARD_HTML = `<!doctype html>
     }
 
     function renderStats(snapshot) {
-      document.getElementById("stat-logs").textContent = snapshot.reader.decisions.length;
-      document.getElementById("stat-queue").textContent = snapshot.queue.items.length;
-      document.getElementById("stat-workers").textContent = snapshot.worker.workers.length;
-      document.getElementById("stat-adverts").textContent = snapshot.map.advertsLastHour.length;
+      const events = snapshot.reader.events || snapshot.reader.decisions || [];
+      document.getElementById("stat-logs").textContent = events.length;
+      document.getElementById("stat-queue").textContent = (snapshot.queue.items || []).length;
+      document.getElementById("stat-workers").textContent = (snapshot.worker.workers || []).length;
+      document.getElementById("stat-adverts").textContent = (snapshot.map.advertsLastHour || []).length;
       document.getElementById("updated").textContent = "Updated " + formatTime(newestGeneratedAt(snapshot.reader, snapshot.queue, snapshot.worker, snapshot.map));
     }
 
@@ -480,7 +491,7 @@ const DASHBOARD_HTML = `<!doctype html>
           { permanent: false, direction: "top", opacity: 0.95 }
         );
         marker.on("click", () => {
-          showDetail("Marker: " + name, resolveDetail(advert.requestId) || advert);
+          showDetail("Marker: " + (advert.nodeName || shortKey(advert.nodePublicKey)), resolveDetail(advert.requestId) || advert);
         });
         marker.addTo(markerLayer);
         bounds.push([advert.lat, advert.lon]);
@@ -497,15 +508,15 @@ const DASHBOARD_HTML = `<!doctype html>
 
     function renderLogs(logs) {
       const target = document.getElementById("logs");
-      target.innerHTML = logs.map((log) => '<div class="log ' + escapeText(log.level) + '"><span class="muted">' + formatTime(log.at) + ' ' + escapeText(log.source) + '</span> ' + escapeText(log.message) + '</div>').join("") || '<div class="muted">No reader decisions yet.</div>';
+      target.innerHTML = (logs || []).map((log) => '<div class="log ' + escapeText(log.level) + '"><span class="muted">' + formatTime(log.at) + ' ' + escapeText(log.source) + '</span> ' + escapeText(log.message) + '</div>').join("") || '<div class="muted">No dashboard events yet.</div>';
     }
 
     function renderWorkers(workers) {
       const target = document.getElementById("workers");
       target.innerHTML = workers.map((worker, index) => {
         const job = worker.currentJob;
-        const label = job ? escapeText(job.nodeName + " · " + shortRequestId(job.requestId) + " · " + shortKey(job.nodePublicKey)) : "No active job";
-        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>Worker ' + shortRequestId(worker.id) + '</strong><span class="pill ' + pillClass(worker.state) + '">' + escapeText(worker.state) + '</span></div><div class="muted">' + label + '</div></button>';
+        const label = job ? escapeText(job.nodeName + " / " + shortRequestId(job.requestId) + " / " + shortKey(job.nodePublicKey)) : "No active job";
+        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>Worker ' + escapeText(shortRequestId(worker.id)) + '</strong><span class="pill ' + pillClass(worker.state) + '">' + escapeText(worker.state) + '</span></div><div class="muted">' + label + '</div></button>';
       }).join("") || '<div class="muted">No workers configured.</div>';
       target.querySelectorAll("button").forEach((button) => {
         button.addEventListener("click", () => {
@@ -520,12 +531,12 @@ const DASHBOARD_HTML = `<!doctype html>
       target.innerHTML = queue.map((item, index) => {
         const job = item.job;
         const position = item.position === null ? "active" : "#" + item.position;
-        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">request ' + shortRequestId(job.requestId) + ' · ' + escapeText(job.advertType) + ' ' + shortKey(job.nodePublicKey) + ' · ' + position + '</div></button>';
+        return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">request ' + escapeText(shortRequestId(job.requestId)) + ' / ' + escapeText(job.advertType) + ' ' + escapeText(shortKey(job.nodePublicKey)) + ' / ' + escapeText(position) + '</div></button>';
       }).join("") || '<div class="muted">Queue is empty.</div>';
       target.querySelectorAll("button").forEach((button) => {
         button.addEventListener("click", () => {
           const item = queue[Number(button.dataset.index)];
-          showDetail(escapeText(item.job?.nodeName || "Queue item"), resolveDetail(item.job?.requestId) || item);
+          showDetail(item.job?.nodeName || "Queue item", resolveDetail(item.job?.requestId) || item);
         });
       });
     }
@@ -550,7 +561,7 @@ const DASHBOARD_HTML = `<!doctype html>
         const job = item.job;
         const name = escapeText(job.nodeName || shortKey(job.nodePublicKey));
         const type = escapeText(job.advertType);
-        const rid = escapeText(job.requestId || "");
+        const rid = escapeText(shortRequestId(job.requestId || ""));
         const status = escapeText(item.state);
         const resp = shortResponse(item.responseFromMeshcoreIO);
         return '<button class="item" type="button" data-index="' + index + '">' +
@@ -562,7 +573,7 @@ const DASHBOARD_HTML = `<!doctype html>
       target.querySelectorAll("button").forEach((button) => {
         button.addEventListener("click", () => {
           const item = history[Number(button.dataset.index)];
-          showDetail(escapeText(item.job?.nodeName || "History item"), resolveDetail(item.job?.requestId) || item);
+          showDetail(item.job?.nodeName || "History item", resolveDetail(item.job?.requestId) || item);
         });
       });
     }
@@ -580,11 +591,11 @@ const DASHBOARD_HTML = `<!doctype html>
       state.dashboard = snapshot;
       renderStats(snapshot);
       renderMqttStatus(snapshot.reader.mqttSource);
-      renderMap(snapshot.map.advertsLastHour);
-      renderLogs(snapshot.reader.decisions);
-      renderWorkers(snapshot.worker.workers);
-      renderQueue(snapshot.queue.items);
-      renderHistory(snapshot.queue.history);
+      renderMap(snapshot.map.advertsLastHour || []);
+      renderLogs(snapshot.reader.events || snapshot.reader.decisions || []);
+      renderWorkers(snapshot.worker.workers || []);
+      renderQueue(snapshot.queue.items || []);
+      renderHistory(snapshot.queue.history || []);
     }
 
     refresh().catch((error) => {
@@ -617,6 +628,7 @@ function dashboardPayload(state: DashboardState): unknown {
     reader: {
       generatedAt: snapshot.generatedAt,
       mqttSource: snapshot.mqttSource,
+      events: snapshot.logs,
       decisions: snapshot.logs.filter((log) =>
         log.source === "mqtt-reader" && !log.message.startsWith("MQTT source error:")
       ),

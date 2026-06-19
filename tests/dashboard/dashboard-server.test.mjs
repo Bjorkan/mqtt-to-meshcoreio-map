@@ -9,6 +9,8 @@ async function withServer(run) {
     now: () => new Date("2026-06-19T10:00:00.000Z"),
   });
   state.recordDecision("accepted advert");
+  state.recordLog("queued upload", "info", "map-upload");
+  state.recordLog("runtime started", "info", "runtime");
   const server = startDashboardServer(state, 0);
   await new Promise((resolve) => setImmediate(resolve));
 
@@ -40,7 +42,12 @@ test("dashboard API returns the expected payload shape", async () => {
 
     assert.equal(response.status, 200);
     assert.equal(body.reader.mqttSource.state, "disconnected");
+    assert.equal(body.reader.events.length, 3);
     assert.equal(body.reader.decisions.length, 1);
+    assert.deepEqual(
+      body.reader.events.map((event) => event.source),
+      ["runtime", "map-upload", "mqtt-reader"]
+    );
     assert.deepEqual(body.queue.items, []);
     assert.deepEqual(body.worker.workers, []);
     assert.deepEqual(body.map.advertsLastHour, []);
