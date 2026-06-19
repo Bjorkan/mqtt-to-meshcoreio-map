@@ -98,7 +98,7 @@ test("dashboard inline script is syntactically valid and keeps escaped newlines"
   await withServer(async (url) => {
     const response = await fetch(`${url}/`);
     const body = await response.text();
-    const scriptMatches = [...body.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/gi)];
+    const scriptMatches = [...body.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/gi)];
     const inlineScript = scriptMatches.at(-1)?.[1];
 
     assert.ok(inlineScript);
