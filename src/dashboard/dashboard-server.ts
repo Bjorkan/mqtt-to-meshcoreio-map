@@ -21,7 +21,7 @@ function readNodeTypeSvgTemplate(nodeType: 1 | 2 | 3 | 4): string {
     .split(".a{fill:#667b89}")
     .join(`.a{fill:${NODE_TYPE_COLOR_PLACEHOLDER}}`);
   if (colorizedTemplate === template) {
-    throw new Error(`Dashboard node type SVG ${nodeType}.svg is missing the expected fill style.`);
+    throw new Error(`Dashboard node type SVG ${nodeType}.svg is missing the expected '.a{fill:#667b89}' style.`);
   }
 
   return colorizedTemplate;
