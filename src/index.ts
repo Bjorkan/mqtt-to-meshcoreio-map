@@ -76,11 +76,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     mapUploader: {
       enabled: true,
       apiUrl: env.MESHCOREIO_API_URL || "https://map.meshcore.io/api/v1/uploader/node",
+      dryRun: envBool(env.MESHCOREIO_DRY_RUN, false),
       minReuploadIntervalSeconds: envIntInRange(env.MESHCOREIO_MIN_REUPLOAD_SECONDS, 3600, 0, 86400),
       requestTimeoutMs: envIntInRange(env.MESHCOREIO_REQUEST_TIMEOUT_MS, 10000, 1000, 120000),
-      maxConcurrentUploads: envIntInRange(env.MESHCOREIO_MAX_CONCURRENT_UPLOADS, 2, 1, 32),
+      maxConcurrentUploads: envIntInRange(env.MESHCOREIO_WORKERS, 1, 1, 32),
       maxQueuedUploads: envIntInRange(env.MESHCOREIO_MAX_QUEUED_UPLOADS, 25, 0, 10000),
-      requireCompleteRadioParams: envBool(env.MESHCOREIO_REQUIRE_RADIO_PARAMS, true),
+      retriesAllowed: envIntInRange(env.MESHCOREIO_RETRIES_ALLOWED, 3, 0, 100),
     },
   };
 }

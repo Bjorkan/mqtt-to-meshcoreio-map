@@ -103,7 +103,56 @@ The request body is signed and has this shape:
 }
 ```
 
-`data` is a JSON string, not a nested JSON object. The `signature` is an Ed25519 signature over the SHA-256 hash of that string. The `publicKey` is the generated ephemeral upload public key for the current service run.
+`data` is a JSON string, not a nested JSON object. The `signature` is an Ed25519 signature over the SHA-256 hash of that string. The `publicKey` is the generated ephemeral upload public key for the worker handling that request.
+
+## Runtime Responsibilities
+
+The runtime is divided into three in-memory responsibilities:
+
+1. MQTT broker reader
+
+   The reader owns the MQTT message contract. It stores valid observer radio status, extracts packet bytes from `raw` and `packets` messages, parses and verifies MeshCore adverts, drops non-uploadable advert types, and deduplicates adverts already handled for a node within the configured reupload interval. It emits a compact JSON-serializable work request containing normalized observer radio params, the raw packet link source, advert identity, and log labels.
+
+   Example queue work request:
+
+   ```json
+   {
+     "requestId": "f8d0f0fb-783c-4a2e-b0c4-22a86b22b43b",
+     "retriesAllowed": 3,
+     "advertKey": "a09aa5...:1800091500",
+     "advertTimestamp": 1800091500,
+     "advertType": "REPEATER",
+     "nodeName": "SE-STO-TEST",
+     "nodePublicKey": "a09aa5...",
+     "rawPacketHex": "0100...",
+     "observerId": "a1a1a1...",
+     "observerName": "SE-STO-OBSERVER",
+     "radioParams": {
+       "freq": 869.618,
+       "bw": 62.5,
+       "sf": 8,
+       "cr": 8
+     },
+     "logContext": {
+       "advertLabel": "SE-STO-TEST (a09aa5)",
+       "observerLabel": "SE-STO-OBSERVER"
+     }
+   }
+   ```
+
+2. Posting queue
+
+   The queue receives work requests from the reader. It keeps at most one queued or active advert per advertised node, enforces `MESHCOREIO_MAX_QUEUED_UPLOADS`, and logs accepted work in this shape:
+
+   ```text
+   Advert from NAME heard by OBSERVERNAME registered to posting queue. Place in queue 5.
+   ```
+
+   Connection and non-terminal upload failures are placed at the back of the queue with `retriesAllowed` reduced by one. If the queue receives a request where `retriesAllowed` is `0`, it logs that no retries are left and drops the request.
+
+3. MeshCore.io poster
+
+   The poster drains the queue. One poster worker is created per `MESHCOREIO_WORKERS` value, defaulting to one worker. Each worker gets its own ephemeral MeshCore.io keypair at startup. The poster converts the plain queue work request into MeshCore.io's signed request format, sends it to the configured API URL, and classifies responses. With `MESHCOREIO_DRY_RUN=true`, the poster stops after conversion/signing and marks the work handled without making the HTTP request. Inserted, duplicate, and coordinates-missing responses are considered handled from this bridge's perspective. Connection failures and non-terminal HTTP/server errors are returned to the queue for retry.
 
 ## Conversion Flow
 
@@ -114,14 +163,15 @@ The request body is signed and has this shape:
 5. Parse the packet with `Packet.fromBytes(...)`.
 6. Continue only if the packet payload is a MeshCore `ADVERT`.
 7. Parse the advert, verify its signature, and keep only `REPEATER`, `ROOM`, and `SENSOR` adverts.
-8. Put eligible adverts through a bounded global upload queue.
-9. Skip stale adverts, duplicate queued or in-flight adverts, too-frequent reuploads, and adverts without complete valid radio parameters.
-10. Build MeshCore.io upload data with normalized radio params and a `meshcore://...` link containing the original packet bytes.
-11. Sign the upload with the in-memory ephemeral private key.
-12. POST the signed request to MeshCore.io and log the API result.
-13. Treat terminal MeshCore.io API responses, such as inserted, duplicate, or coordinates-missing responses, as handled and remove them from the queue.
-14. Retry failed upload attempts by placing the advert at the back of the global queue, up to three total tries.
-15. Wait 5 seconds after each upload job before that worker takes the next queued request.
+8. Format eligible adverts as queue work requests with normalized observer radio parameters and the original packet bytes.
+9. Put work requests through a bounded global posting queue.
+10. Skip stale adverts, duplicate queued or in-flight nodes, too-frequent reuploads, and adverts without complete valid radio parameters.
+11. Build MeshCore.io upload data with normalized radio params and a `meshcore://...` link containing the original packet bytes.
+12. Sign the upload with the worker's in-memory ephemeral private key.
+13. POST the signed request to MeshCore.io and log the API result.
+14. Treat terminal MeshCore.io API responses, such as inserted, duplicate, or coordinates-missing responses, as handled and remove them from the queue.
+15. Retry failed upload attempts by reducing `retriesAllowed` and placing the advert at the back of the global queue until no retries remain.
+16. Wait 5 seconds after each upload job before that worker takes the next queued request.
 
 Deduplication, replay protection, observer radio state, queued uploads, in-flight uploads, and retry state are kept in memory. A service restart starts with an empty local cache; MeshCore.io may still apply its own duplicate handling.
 

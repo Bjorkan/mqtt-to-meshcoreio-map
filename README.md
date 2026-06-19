@@ -14,8 +14,14 @@ The service consumes MQTT observer messages, validates MeshCore packet data, sig
 - Verifies MeshCore advert signatures.
 - Uploads only `REPEATER`, `ROOM`, and `SENSOR` adverts.
 - Skips chat adverts, invalid packets, stale replays, and too-frequent reuploads.
-- Generates a new ephemeral MeshCore.io upload identity on each start.
-- Logs the generated public key, but never logs the private key.
+- Generates a new ephemeral MeshCore.io upload identity for each worker on each start.
+- Logs generated public keys, but never logs private keys.
+
+Internally this is split into three responsibilities:
+
+- MQTT broker reader: connects to the source broker, validates adverts, deduplicates repeated observations, and attaches observer radio settings.
+- Posting queue: accepts advert jobs, keeps duplicate nodes out of the queue, reports queue position, and requeues connection failures at the back.
+- MeshCore.io poster: drains the queue with one or more workers, signs each request with that worker's ephemeral keypair, posts to MeshCore.io, and treats terminal server responses as handled.
 
 ## Configuration
 
@@ -28,18 +34,20 @@ SOURCE_MQTT_PASSWORD=
 TOPIC_FILTER=meshcore/#
 ```
 
-The service creates a fresh MeshCore.io signing identity every time it starts. The public key is written to the logs so you can see which uploader identity is being used for that run. The private key is generated in memory only and is not logged.
+The service creates a fresh MeshCore.io signing identity for each worker every time it starts. Public keys are written to the logs so you can see which uploader identities are being used for that run. Private keys are generated in memory only and are not logged.
 
 The MQTT source should publish observer `status` messages and MeshCore packet messages on `raw` or `packets` topics. For the expected message formats, conversion flow, signing details, and MeshCore.io request shape, see [TECHNICAL.md](TECHNICAL.md).
 
 Important runtime settings:
 
-- `MESHCOREIO_MAX_CONCURRENT_UPLOADS`: maximum number of upload workers draining the global advert upload queue. Default: `2`.
+- `MESHCOREIO_WORKERS`: number of upload workers draining the global advert upload queue. Default: `1`.
+- `MESHCOREIO_DRY_RUN`: run the full reader and queue flow but prevent workers from posting to MeshCore.io. Default: `false`.
 - `MESHCOREIO_MAX_QUEUED_UPLOADS`: maximum number of queued upload requests waiting for a worker. Default: `25`.
+- `MESHCOREIO_RETRIES_ALLOWED`: retry budget placed on each new queue work request. Default: `3`.
 - `MESHCOREIO_REQUEST_TIMEOUT_MS`: HTTP timeout for MeshCore.io requests. Default: `10000`.
 - `MESHCOREIO_MIN_REUPLOAD_SECONDS`: minimum accepted advert timestamp gap per advertised node. Default: `3600`.
 
-Failed MeshCore.io upload attempts are placed at the back of the global queue and retried up to three total tries. After each upload job, the worker waits 5 seconds before taking another queued request. If the queue is full, extra upload requests are dropped.
+Each worker creates its own ephemeral MeshCore.io signing identity at startup. In dry-run mode, workers still drain and validate queue work but do not make the final HTTP request to MeshCore.io. Failed MeshCore.io upload attempts are placed at the back of the global queue with one retry removed from the request. After each upload job, the worker waits 5 seconds before taking another queued request. If the queue is full or the request has no retries left, the request is dropped.
 
 Numeric environment variables are range-checked. Invalid, negative, zero-where-not-allowed, or unreasonably large values fall back to safe defaults.
 
@@ -82,7 +90,7 @@ Start the bridge:
 docker compose up -d
 ```
 
-The Compose example uses the published GitHub Container Registry image, sets `LOG_COLOR=false`, enables log rotation, applies basic container hardening, and uses a conservative first-release `MESHCOREIO_MAX_CONCURRENT_UPLOADS=1`.
+The Compose example uses the published GitHub Container Registry image, sets `LOG_COLOR=false`, enables log rotation, applies basic container hardening, and uses a conservative `MESHCOREIO_WORKERS=1`.
 
 For testing, the published image can also be run directly with the MQTT settings in the command:
 

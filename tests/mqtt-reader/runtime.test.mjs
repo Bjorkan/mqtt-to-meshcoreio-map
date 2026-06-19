@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
 
-import { loadConfig, redactUrlCredentials, startRuntime } from "../dist/index.js";
+import { loadConfig, redactUrlCredentials, startRuntime } from "../../dist/index.js";
 
 class FakeMqttClient extends EventEmitter {
   constructor(url, options) {
@@ -52,11 +52,12 @@ function makeConfig(overrides = {}) {
     mapUploader: {
       enabled: true,
       apiUrl: "https://map.meshcore.io/api/v1/uploader/node",
+      dryRun: false,
       minReuploadIntervalSeconds: 3600,
       requestTimeoutMs: 10000,
       maxConcurrentUploads: 2,
       maxQueuedUploads: 25,
-      requireCompleteRadioParams: true,
+      retriesAllowed: 3,
     },
     ...overrides,
   };
@@ -78,8 +79,10 @@ test("loads runtime configuration from environment with production defaults", ()
     TOPIC_FILTER: "custom/#",
     SOURCE_REJECT_UNAUTHORIZED: "false",
     MESHCOREIO_API_URL: "https://map.example/api",
-    MESHCOREIO_MAX_CONCURRENT_UPLOADS: "4",
+    MESHCOREIO_DRY_RUN: "true",
+    MESHCOREIO_WORKERS: "4",
     MESHCOREIO_MAX_QUEUED_UPLOADS: "50",
+    MESHCOREIO_RETRIES_ALLOWED: "5",
   });
 
   assert.equal(configured.sourceUrl, "mqtts://broker.example:8883");
@@ -89,8 +92,10 @@ test("loads runtime configuration from environment with production defaults", ()
   assert.equal(configured.topicFilter, "custom/#");
   assert.equal(configured.rejectUnauthorized, false);
   assert.equal(configured.mapUploader.apiUrl, "https://map.example/api");
+  assert.equal(configured.mapUploader.dryRun, true);
   assert.equal(configured.mapUploader.maxConcurrentUploads, 4);
   assert.equal(configured.mapUploader.maxQueuedUploads, 50);
+  assert.equal(configured.mapUploader.retriesAllowed, 5);
 });
 
 test("falls back for invalid numeric environment values", () => {
@@ -98,15 +103,17 @@ test("falls back for invalid numeric environment values", () => {
     MQTT_RECONNECT_PERIOD_MS: "-1",
     MQTT_CONNECT_TIMEOUT_MS: "0",
     MESHCOREIO_REQUEST_TIMEOUT_MS: "999999999",
-    MESHCOREIO_MAX_CONCURRENT_UPLOADS: "0",
+    MESHCOREIO_WORKERS: "0",
     MESHCOREIO_MAX_QUEUED_UPLOADS: "-5",
+    MESHCOREIO_RETRIES_ALLOWED: "101",
   });
 
   assert.equal(configured.reconnectPeriodMs, 5000);
   assert.equal(configured.connectTimeoutMs, 30000);
   assert.equal(configured.mapUploader.requestTimeoutMs, 10000);
-  assert.equal(configured.mapUploader.maxConcurrentUploads, 2);
+  assert.equal(configured.mapUploader.maxConcurrentUploads, 1);
   assert.equal(configured.mapUploader.maxQueuedUploads, 25);
+  assert.equal(configured.mapUploader.retriesAllowed, 3);
 });
 
 test("redacts credentials from source MQTT URLs before logging", () => {
