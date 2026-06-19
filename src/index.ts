@@ -149,7 +149,7 @@ const DEMO_STATUSES = [
   { status: "accepted", detail: "Demo advert was accepted as a recent duplicate by Meshcore.io." },
 ] as const;
 
-const DEMO_WORKERS = ["demo-worker-1", "demo-worker-2"];
+const DEMO_WORKER_COUNT = 2;
 
 function makeDemoJob(advert: typeof DEMO_ADVERTS[number], index: number, requestId: string): MapUploadWorkRequest {
   const nodePublicKey = `${String(index + 1).repeat(64)}`.slice(0, 64);
@@ -174,7 +174,8 @@ function makeDemoJob(advert: typeof DEMO_ADVERTS[number], index: number, request
 
 function startDashboardDemoAdverts(state: DashboardState): NodeJS.Timeout {
   const sharedIds = DEMO_ADVERTS.map(() => randomUUID());
-  state.configureWorkers(DEMO_WORKERS);
+  const workerIds = Array.from({ length: DEMO_WORKER_COUNT }, () => randomUUID());
+  state.configureWorkers(workerIds);
 
   const queueJobs: Array<{ job: MapUploadWorkRequest; workerId: string; stage: number }> = [];
 
@@ -194,7 +195,7 @@ function startDashboardDemoAdverts(state: DashboardState): NodeJS.Timeout {
     const advertIndex = tick % DEMO_ADVERTS.length;
     const advert = DEMO_ADVERTS[advertIndex];
     const requestId = sharedIds[advertIndex];
-    const workerId = DEMO_WORKERS[tick % DEMO_WORKERS.length];
+    const workerId = workerIds[tick % workerIds.length];
     const job = makeDemoJob(advert, advertIndex, requestId);
 
     state.queueStartedImmediately(job);
