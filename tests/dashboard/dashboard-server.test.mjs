@@ -63,9 +63,19 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /function clusterStatus/);
       assert.match(body, /meshcore-cluster-icon/);
       assert.match(body, /meshcore-node-icon/);
-      assert.match(body, /\.meshcore-node-icon\.accepted \{ --marker-color: var\(--ok\); \}/);
-      assert.match(body, /\.meshcore-node-icon\.pending \{ --marker-color: var\(--warn\); \}/);
-      assert.match(body, /\.meshcore-node-icon\.rejected \{ --marker-color: var\(--error\); \}/);
+      // Inline SVG icons (adapted from meshcore-dev/map.meshcore.io, MIT licence)
+      assert.match(body, /NODE_TYPE_SVGS/);
+      assert.match(body, /STATUS_COLORS/);
+      // Repeater icon (type 2) contains distinctive antenna path
+      assert.match(body, /m196\.7 284/);
+      // Room-server icon (type 3) contains distinctive group path
+      assert.match(body, /m256 265\.4/);
+      // Status colours match site palette
+      assert.match(body, /accepted.*#61d394|#61d394.*accepted/);
+      assert.match(body, /pending.*#f4c95d|#f4c95d.*pending/);
+      assert.match(body, /rejected.*#ff6b6b|#ff6b6b.*rejected/);
+      // Old CSS-dot approach must not be present
+      assert.doesNotMatch(body, /meshcore-node-dot/);
       assert.match(body, /\.leaflet-top, \.leaflet-bottom \{ z-index: 900; \}/);
       assert.match(body, /--ok: #61d394/);
       assert.match(body, /--warn: #f4c95d/);

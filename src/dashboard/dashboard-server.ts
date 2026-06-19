@@ -154,36 +154,7 @@ const DASHBOARD_HTML = `<!doctype html>
     }
     .leaflet-control-attribution a { color: var(--accent); }
     .meshcore-node-icon, .meshcore-cluster-icon { background: none; border: 0; }
-    .meshcore-node-dot {
-      display: block;
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: var(--marker-color);
-      border: 2px solid #fff;
-      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55);
-    }
-    .meshcore-node-type-2 .meshcore-node-dot::after {
-      content: "";
-      display: block;
-      width: 10px;
-      height: 10px;
-      margin: 7px auto;
-      border: 3px solid #fff;
-      border-radius: 50%;
-    }
-    .meshcore-node-type-3 .meshcore-node-dot::after {
-      content: "";
-      display: block;
-      width: 14px;
-      height: 8px;
-      margin: 9px auto;
-      background: #fff;
-      border-radius: 8px 8px 3px 3px;
-    }
-    .meshcore-node-icon.accepted { --marker-color: var(--ok); }
-    .meshcore-node-icon.pending { --marker-color: var(--warn); }
-    .meshcore-node-icon.rejected { --marker-color: var(--error); }
+    .meshcore-node-icon svg { width: 32px; height: 32px; display: block; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.45)); }
     .meshcore-cluster-icon {
       background-clip: padding-box;
       border-radius: 20px;
@@ -572,6 +543,16 @@ const DASHBOARD_HTML = `<!doctype html>
       badge.className = "status-badge " + (state === "connected" ? "connected" : "");
     }
 
+    const STATUS_COLORS = { accepted: '#61d394', pending: '#f4c95d', rejected: '#ff6b6b' };
+
+    // SVG icons adapted from meshcore-dev/map.meshcore.io (MIT licence)
+    // The circle fill colour is injected at runtime based on node status.
+    const NODE_TYPE_SVGS = {
+      1: function(c) { return '<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" fill="' + c + '" d="m256 512c-141.6 0-256-114.4-256-256 0-141.6 114.4-256 256-256 141.6 0 256 114.4 256 256 0 141.6-114.4 256-256 256z"/><path fill="#fff" d="m256.1 256.1c34.5 0 62.4-27.9 62.4-62.4 0-34.5-27.9-62.4-62.4-62.4-34.5 0-62.4 27.9-62.4 62.4 0 34.5 27.9 62.4 62.4 62.4zm0 31.2c-41.6 0-124.8 20.9-124.8 62.4v31.1h249.5v-31.1c0-41.5-83.1-62.4-124.7-62.4z"/></svg>'; },
+      2: function(c) { return '<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" fill="' + c + '" d="m256 512c-141.6 0-256-114.4-256-256 0-141.6 114.4-256 256-256 141.6 0 256 114.4 256 256 0 141.6-114.4 256-256 256z"/><path fill-rule="evenodd" fill="#fff" d="m196.7 284l15-15c-12.5-12.5-18.7-28.7-18.7-43.6 0-16.2 6.2-32.4 18.7-43.7l-15-14.9c-16.2 16.2-24.9 37.4-24.9 58.6 0 21.2 8.7 42.4 24.9 58.6zm147.1-147.1l-15 14.9c19.9 20 29.9 47.4 29.9 73.6 0 26.2-10 53.6-29.9 73.5l15 15c24.9-24.9 36.1-56.1 36.1-88.5 0-32.4-12.5-63.6-36.1-88.5zm-162 14.9l-15-14.9c-23.7 24.9-36.1 56.1-36.1 88.5 0 32.4 12.4 63.6 36.1 88.5l15-15c-20-19.9-29.9-47.3-29.9-73.5 0-26.2 9.9-53.6 29.9-73.6zm132 132.2c16.2-16.2 25-37.4 25-58.6-1.3-21.2-8.8-42.4-25-58.6l-14.9 14.9c12.5 12.5 18.7 28.7 18.7 43.7 0 16.2-6.2 32.4-18.7 43.6zm-27.4-58.6c0-17.2-14-31.1-31.2-31.1-17.2 0-31.1 13.9-31.1 31.1 0 9.5 4.2 17.7 10.8 23.5l-42 126.1h24.9l8.4-24.9h58.2l8.2 24.9h24.9l-42-126.1c6.6-5.8 10.9-14 10.9-23.5zm-52 99.7l20.8-62.3 20.8 62.3z"/></svg>'; },
+      3: function(c) { return '<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" fill="' + c + '" d="m256 512c-141.6 0-256-114.4-256-256 0-141.6 114.4-256 256-256 141.6 0 256 114.4 256 256 0 141.6-114.4 256-256 256z"/><path fill="#fff" d="m256 265.4c20.4 0 38.4 4.9 53 11.2 13.5 6 22 19.5 22 34.2v20.2h-150v-20.1c0-14.8 8.5-28.3 22-34.1 14.6-6.5 32.6-11.4 53-11.4zm-100 3.1c13.8 0 25-11.2 25-25 0-13.7-11.2-25-25-25-13.7 0-25 11.3-25 25 0 13.8 11.3 25 25 25zm14.1 13.8c-4.6-0.8-9.2-1.3-14.1-1.3-12.4 0-24.1 2.6-34.7 7.3-9.3 4-15.3 13-15.3 23.1v19.6h56.3v-20.1c0-10.4 2.8-20.1 7.8-28.6zm185.9-13.8c13.8 0 25-11.2 25-25 0-13.8-11.2-25-25-25-13.8 0-25 11.2-25 25 0 13.8 11.2 25 25 25zm50 42.9c0-10.1-6-19.1-15.2-23.1-10.7-4.7-22.4-7.3-34.8-7.3-4.9 0-9.5 0.5-14.1 1.3 5 8.5 7.8 18.2 7.8 28.6v20.1h56.3zm-150-130.4c20.8 0 37.5 16.8 37.5 37.5 0 20.8-16.8 37.5-37.5 37.5-20.7 0-37.5-16.7-37.5-37.5 0-20.7 16.8-37.5 37.5-37.5z"/></svg>'; },
+    };
+
     function markerStatus(status) {
       if (status === "rejected" || status === "accepted") return status;
       return "pending";
@@ -590,8 +571,10 @@ const DASHBOARD_HTML = `<!doctype html>
       const cacheKey = nodeType + "|" + status;
       const cached = markerIconCache.get(cacheKey);
       if (cached) return cached;
+      const color = STATUS_COLORS[status] || STATUS_COLORS.pending;
+      const svgFn = NODE_TYPE_SVGS[nodeType] || NODE_TYPE_SVGS[1];
       const icon = L.divIcon({
-        html: '<span class="meshcore-node-dot"></span>',
+        html: svgFn(color),
         className: "meshcore-node-icon meshcore-node-type-" + nodeType + " " + status,
         iconSize: [32, 32],
         iconAnchor: [17, 17],
