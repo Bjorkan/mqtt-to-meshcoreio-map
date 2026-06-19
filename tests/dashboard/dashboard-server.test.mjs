@@ -92,18 +92,18 @@ test("dashboard serves HTML at root and index", async () => {
       assert.doesNotMatch(body, /table\.node-info/);
     }
   });
+});
 
-  test("dashboard inline script is syntactically valid and keeps escaped newlines", async () => {
-    await withServer(async (url) => {
-      const response = await fetch(`${url}/`);
-      const body = await response.text();
-      const scriptMatches = [...body.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/g)];
-      const inlineScript = scriptMatches.at(-1)?.[1];
+test("dashboard inline script is syntactically valid and keeps escaped newlines", async () => {
+  await withServer(async (url) => {
+    const response = await fetch(`${url}/`);
+    const body = await response.text();
+    const scriptMatches = [...body.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/gi)];
+    const inlineScript = scriptMatches.at(-1)?.[1];
 
-      assert.ok(inlineScript);
-      assert.match(inlineScript, /\.join\("\\n"\)/);
-      assert.doesNotThrow(() => new vm.Script(inlineScript));
-    });
+    assert.ok(inlineScript);
+    assert.match(inlineScript, /\.join\("\\n"\)/);
+    assert.doesNotThrow(() => new vm.Script(inlineScript));
   });
 });
 
