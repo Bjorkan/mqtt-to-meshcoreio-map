@@ -124,22 +124,28 @@ function toJobSnapshot(job: MapUploadWorkRequest): DashboardJobSnapshot {
   };
 }
 
-function isoNow(): string {
-  return new Date().toISOString();
+export interface DashboardStateOptions {
+  now?: () => Date;
 }
 
 export class DashboardState {
   private nextLogId = 1;
+  private readonly now: () => Date;
   private readonly logs: DashboardLogEntry[] = [];
   private readonly adverts = new Map<string, DashboardAdvertLocation>();
   private readonly queueItems = new Map<string, DashboardQueueItem>();
   private readonly queueHistory: DashboardQueueItem[] = [];
   private readonly workers = new Map<string, DashboardWorkerSnapshot>();
-  private mqttSource: DashboardMqttSourceStatus = {
-    state: "disconnected",
-    detail: "Not connected yet.",
-    updatedAt: isoNow(),
-  };
+  private mqttSource: DashboardMqttSourceStatus;
+
+  constructor(options: DashboardStateOptions = {}) {
+    this.now = options.now ?? (() => new Date());
+    this.mqttSource = {
+      state: "disconnected",
+      detail: "Not connected yet.",
+      updatedAt: this.isoNow(),
+    };
+  }
 
   configureWorkers(workerIds: string[]): void {
     workerIds.forEach((workerId, index) => {
@@ -148,7 +154,7 @@ export class DashboardState {
           id: workerId,
           index,
           state: "idle",
-          updatedAt: isoNow(),
+          updatedAt: this.isoNow(),
         });
       }
     });
@@ -163,7 +169,7 @@ export class DashboardState {
   recordLog(message: string, level: DashboardLogLevel = "info", source = "map-upload"): void {
     this.logs.push({
       id: this.nextLogId,
-      at: isoNow(),
+      at: this.isoNow(),
       level,
       message,
       source,
@@ -186,7 +192,7 @@ export class DashboardState {
     this.mqttSource = {
       state,
       detail,
-      updatedAt: isoNow(),
+      updatedAt: this.isoNow(),
     };
   }
 
@@ -206,8 +212,8 @@ export class DashboardState {
       requestId: input.requestId,
       status: "heard",
       statusDetail: "Advert heard by MQTT reader.",
-      at: isoNow(),
-      updatedAt: isoNow(),
+      at: this.isoNow(),
+      updatedAt: this.isoNow(),
       nodeName: input.nodeName,
       nodePublicKey: input.nodePublicKey,
       advertType: input.advertType,
@@ -237,8 +243,8 @@ export class DashboardState {
       requestId: input.requestId,
       status: input.status,
       statusDetail: input.statusDetail,
-      at: existing?.at ?? isoNow(),
-      updatedAt: isoNow(),
+      at: existing?.at ?? this.isoNow(),
+      updatedAt: this.isoNow(),
       nodeName: input.nodeName,
       nodePublicKey: input.nodePublicKey,
       advertType: input.advertType,
@@ -283,7 +289,7 @@ export class DashboardState {
       if (item) {
         item.position = index + 1;
         item.state = "queued";
-        item.updatedAt = isoNow();
+        item.updatedAt = this.isoNow();
       }
     });
   }
@@ -298,7 +304,7 @@ export class DashboardState {
       id: workerId,
       index: existingWorker?.index ?? 0,
       state: "uploading",
-      updatedAt: isoNow(),
+      updatedAt: this.isoNow(),
       currentJob: toJobSnapshot(job),
     });
     this.upsertQueueItem(job, "active", null, workerId, `Worker ${workerId} is uploading.`);
@@ -311,7 +317,7 @@ export class DashboardState {
       id: workerId,
       index: existingWorker?.index ?? 0,
       state: "cooldown",
-      updatedAt: isoNow(),
+      updatedAt: this.isoNow(),
       currentJob: toJobSnapshot(job),
       detail: "Waiting before draining the next queued upload.",
     });
@@ -323,14 +329,14 @@ export class DashboardState {
       id: workerId,
       index: existingWorker?.index ?? 0,
       state: "idle",
-      updatedAt: isoNow(),
+      updatedAt: this.isoNow(),
     });
   }
 
   snapshot(): DashboardSnapshot {
     this.cleanupAdvertLocations();
     return {
-      generatedAt: isoNow(),
+      generatedAt: this.isoNow(),
       mqttSource: { ...this.mqttSource },
       logs: [...this.logs].reverse(),
       queue: [...this.queueItems.values()]
@@ -358,7 +364,7 @@ export class DashboardState {
       id: job.requestId,
       state,
       position,
-      updatedAt: isoNow(),
+      updatedAt: this.isoNow(),
       job: toJobSnapshot(job),
       workerId,
       detail,
@@ -378,7 +384,6 @@ export class DashboardState {
       this.queueHistory.pop();
     }
 
-    this.adverts.delete(requestId);
   }
 
   private updateAdvertStatus(
@@ -395,15 +400,19 @@ export class DashboardState {
     advert.status = status;
     advert.statusDetail = statusDetail;
     advert.responseFromMeshcoreIO = responseFromMeshcoreIO;
-    advert.updatedAt = isoNow();
+    advert.updatedAt = this.isoNow();
   }
 
   private cleanupAdvertLocations(): void {
-    const oldest = Date.now() - ONE_HOUR_MS;
+    const oldest = this.now().getTime() - ONE_HOUR_MS;
     for (const [key, advert] of this.adverts) {
       if (Date.parse(advert.at) < oldest) {
         this.adverts.delete(key);
       }
     }
+  }
+
+  private isoNow(): string {
+    return this.now().toISOString();
   }
 }
