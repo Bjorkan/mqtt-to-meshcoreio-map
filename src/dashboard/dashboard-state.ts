@@ -132,10 +132,9 @@ function isPreferredAdvertLocation(
   candidate: DashboardAdvertLocation,
   current: DashboardAdvertLocation
 ): boolean {
-  const candidatePriority = ADVERT_STATUS_PRIORITY[candidate.status];
-  const currentPriority = ADVERT_STATUS_PRIORITY[current.status];
-  if (candidatePriority !== currentPriority) {
-    return candidatePriority > currentPriority;
+  const updatedAtComparison = candidate.updatedAt.localeCompare(current.updatedAt);
+  if (updatedAtComparison !== 0) {
+    return updatedAtComparison > 0;
   }
 
   const atComparison = candidate.at.localeCompare(current.at);
@@ -143,7 +142,13 @@ function isPreferredAdvertLocation(
     return atComparison > 0;
   }
 
-  return candidate.updatedAt.localeCompare(current.updatedAt) > 0;
+  const candidatePriority = ADVERT_STATUS_PRIORITY[candidate.status];
+  const currentPriority = ADVERT_STATUS_PRIORITY[current.status];
+  if (candidatePriority !== currentPriority) {
+    return candidatePriority > currentPriority;
+  }
+
+  return candidate.requestId.localeCompare(current.requestId) > 0;
 }
 
 export interface DashboardStateOptions {
