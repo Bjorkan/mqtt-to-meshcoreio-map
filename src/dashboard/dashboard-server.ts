@@ -759,7 +759,7 @@ const DASHBOARD_HTML = `<!doctype html>
     function renderLogs(logs) {
       const target = document.getElementById("logs");
       const entries = (logs || []).slice(0, 100);
-      const signature = entries.map((log) => [log.at, log.level, log.source, log.message].join("|")).join("\n");
+      const signature = entries.map((log) => [log.at, log.level, log.source, log.message].join("|")).join("\\n");
       renderWhenChanged("logs", entries, target, () => {
         target.innerHTML = entries.map((log) => '<div class="log ' + escapeText(log.level) + '"><span class="muted">' + formatTime(log.at) + ' ' + escapeText(log.source) + '</span> ' + escapeText(log.message) + '</div>').join("") || '<div class="muted">No dashboard events yet.</div>';
       }, signature);
@@ -774,7 +774,7 @@ const DASHBOARD_HTML = `<!doctype html>
         worker.currentJob?.requestKey || "",
         worker.currentJob?.nodeKey || "",
         worker.currentJob?.nodeName || "",
-      ].join("|")).join("\n");
+      ].join("|")).join("\\n");
       renderWhenChanged("workers", items, target, () => {
         target.innerHTML = (workers || []).map((worker, index) => {
           const job = worker.currentJob;
@@ -799,7 +799,7 @@ const DASHBOARD_HTML = `<!doctype html>
         item.job?.nodeKey || "",
         item.job?.nodeName || "",
         item.job?.advertType || "",
-      ].join("|")).join("\n");
+      ].join("|")).join("\\n");
       renderWhenChanged("queue", items, target, () => {
         target.innerHTML = (queue || []).map((item, index) => {
           const job = item.job;
@@ -823,7 +823,7 @@ const DASHBOARD_HTML = `<!doctype html>
         item.responseSummary || "",
         item.job?.requestKey || "",
         item.job?.nodeKey || "",
-      ].join("|")).join("\n");
+      ].join("|")).join("\\n");
       renderWhenChanged("history", items, target, () => {
         if (!history || history.length === 0) {
           target.innerHTML = '<div class="muted" style="text-align:center;padding:20px">No completed adverts yet.</div>';
@@ -866,7 +866,7 @@ const DASHBOARD_HTML = `<!doctype html>
       renderStats(snapshot);
       renderMqttStatus(snapshot.reader.mqttSource);
       const adverts = snapshot.map.advertsLastHour || [];
-      const mapSignature = adverts.map((advert) => markerKey(advert) + "|" + markerFingerprint(advert)).join("\n");
+      const mapSignature = adverts.map((advert) => markerKey(advert) + "|" + markerFingerprint(advert)).join("\\n");
       renderWhenChanged("map", adverts, document.getElementById("map"), () => renderMap(adverts), mapSignature);
       renderLogs(snapshot.reader.events || []);
       renderWorkers(snapshot.worker.workers || []);
