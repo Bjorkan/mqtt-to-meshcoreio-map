@@ -46,5 +46,26 @@ jobs:
         with:
           context: .
           push: false
-          load: false
+          load: true
           tags: mqtt-to-meshcoreio-map:ci
+
+      - name: Smoke test image
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id="$(docker run -d --rm \
+            -p 127.0.0.1:8080:80 \
+            -e ENABLE_DASHBOARD=true \
+            -e SOURCE_MQTT_URL=mqtt://127.0.0.1:9 \
+            mqtt-to-meshcoreio-map:ci)"
+          trap 'docker stop "$container_id" >/dev/null' EXIT
+
+          for _ in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/healthz | grep -qx ok; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs "$container_id"
+          exit 1

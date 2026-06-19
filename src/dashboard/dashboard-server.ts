@@ -598,6 +598,7 @@ const DASHBOARD_HTML = `<!doctype html>
 </html>`;
 
 export interface DashboardServer {
+  url?: string;
   close(): Promise<void>;
 }
 
@@ -673,6 +674,14 @@ export function startDashboardServer(state: DashboardState, port: number): Dashb
   server.listen(port, "0.0.0.0");
 
   return {
+    get url() {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        return undefined;
+      }
+
+      return `http://127.0.0.1:${address.port}`;
+    },
     close: () => new Promise<void>((resolve, reject) => {
       server.close((error) => {
         if (error) {
