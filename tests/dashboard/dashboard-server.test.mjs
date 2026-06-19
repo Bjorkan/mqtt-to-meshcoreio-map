@@ -72,7 +72,8 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /mapSection\.classList\.toggle\("is-expanded"/);
       assert.match(body, /100dvh/);
       assert.match(body, /if \(stableParts\.some\(Boolean\)\) return stableParts\.join\("\|"\);/);
-      assert.match(body, /return \["fallback", advert\.nodeName \|\| "", advert\.advertType \|\| "", advert\.lat, advert\.lon\]\.join\("\|"\);/);
+      assert.match(body, /Number\(advert\.lat\)\.toFixed\(5\)/);
+      assert.match(body, /Number\(advert\.lon\)\.toFixed\(5\)/);
       assert.match(body, /marker\.bindTooltip/);
       assert.match(body, /showDetail\("Marker: "/);
       assert.match(body, /function scheduleRefresh\(delay\)/);
@@ -81,6 +82,7 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /Live update failed: /);
       assert.doesNotMatch(body, /function markerColor/);
       assert.doesNotMatch(body, /role="img"/);
+      assert.doesNotMatch(body, /tabindex="0"/);
       assert.doesNotMatch(body, /marker\.bindPopup/);
       assert.doesNotMatch(body, /setInterval\(/);
       assert.doesNotMatch(body, /table\.node-info/);

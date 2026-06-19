@@ -414,7 +414,7 @@ const DASHBOARD_HTML = `<!doctype html>
           <span class="rejected">rejected without Meshcore.io handling</span>
         </div>
       </div>
-      <div class="map" id="map" tabindex="0" aria-label="Advert flow locations from the last hour"></div>
+      <div class="map" id="map" aria-label="Advert flow locations from the last hour"></div>
     </section>
     <section>
       <div class="section-head">
@@ -447,7 +447,6 @@ const DASHBOARD_HTML = `<!doctype html>
     const markerRecords = new Map();
     let leafletMap = null;
     let markerLayer = null;
-    let refreshInFlight = false;
 
     document.getElementById("detail-close").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => {
@@ -648,7 +647,13 @@ const DASHBOARD_HTML = `<!doctype html>
     function markerKey(advert) {
       const stableParts = [advert.requestKey || "", advert.nodeKey || "", advert.nodePublicKey || ""];
       if (stableParts.some(Boolean)) return stableParts.join("|");
-      return ["fallback", advert.nodeName || "", advert.advertType || "", advert.lat, advert.lon].join("|");
+      return [
+        "fallback",
+        advert.nodeName || "",
+        advert.advertType || "",
+        Number(advert.lat).toFixed(5),
+        Number(advert.lon).toFixed(5),
+      ].join("|");
     }
 
     function markerFingerprint(advert) {
@@ -875,11 +880,6 @@ const DASHBOARD_HTML = `<!doctype html>
     }
 
     async function runRefreshLoop() {
-      if (refreshInFlight) {
-        scheduleRefresh(POLL_INTERVAL_MS);
-        return;
-      }
-      refreshInFlight = true;
       try {
         await refresh();
       } catch (error) {
@@ -887,7 +887,6 @@ const DASHBOARD_HTML = `<!doctype html>
         document.getElementById("updated").textContent = "Update failed";
         setRefreshError("Live update failed: " + message + ". Retrying automatically.");
       } finally {
-        refreshInFlight = false;
         scheduleRefresh(POLL_INTERVAL_MS);
       }
     }
