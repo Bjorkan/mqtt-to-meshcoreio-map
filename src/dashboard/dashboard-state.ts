@@ -138,12 +138,12 @@ function isPreferredAdvertLocation(
     return candidatePriority > currentPriority;
   }
 
-  const updatedComparison = candidate.updatedAt.localeCompare(current.updatedAt);
-  if (updatedComparison !== 0) {
-    return updatedComparison > 0;
+  const atComparison = candidate.at.localeCompare(current.at);
+  if (atComparison !== 0) {
+    return atComparison > 0;
   }
 
-  return candidate.at.localeCompare(current.at) > 0;
+  return candidate.updatedAt.localeCompare(current.updatedAt) > 0;
 }
 
 export interface DashboardStateOptions {
