@@ -79,7 +79,7 @@ const DASHBOARD_HTML = `<!doctype html>
     }
     .stats {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
       grid-column: 1 / -1;
     }
@@ -292,8 +292,7 @@ const DASHBOARD_HTML = `<!doctype html>
   </header>
   <main>
     <div class="stats">
-      <div class="stat"><strong id="stat-logs">0</strong><span>dashboard events</span></div>
-      <div class="stat"><strong id="stat-queue">0</strong><span>queued or active</span></div>
+      <div class="stat"><strong id="stat-queue">0</strong><span>Queued to be pushed to Meshcore.io</span></div>
       <div class="stat"><strong id="stat-workers">0</strong><span>workers</span></div>
       <div class="stat"><strong id="stat-adverts">0</strong><span>adverts with coordinates, last hour</span></div>
     </div>
@@ -424,8 +423,6 @@ const DASHBOARD_HTML = `<!doctype html>
     }
 
     function renderStats(snapshot) {
-      const events = snapshot.reader.events || snapshot.reader.decisions || [];
-      document.getElementById("stat-logs").textContent = events.length;
       document.getElementById("stat-queue").textContent = (snapshot.queue.items || []).length;
       document.getElementById("stat-workers").textContent = (snapshot.worker.workers || []).length;
       document.getElementById("stat-adverts").textContent = (snapshot.map.advertsLastHour || []).length;
