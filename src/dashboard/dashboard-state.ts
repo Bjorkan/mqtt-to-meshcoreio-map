@@ -80,13 +80,18 @@ interface DashboardJobSnapshot {
   advertType: string;
   nodeName: string;
   nodePublicKey: string;
-  rawPacketHex: string;
   observerId?: string;
   observerName?: string;
   radioParams: RadioParams;
   advertLabel: string;
   observerLabel: string;
 }
+
+const ADVERT_STATUS_PRIORITY: Record<DashboardAdvertLocation["status"], number> = {
+  accepted: 3,
+  pending: 2,
+  rejected: 1,
+};
 
 let activeDashboardState: DashboardState | undefined;
 
@@ -115,13 +120,30 @@ function toJobSnapshot(job: MapUploadWorkRequest): DashboardJobSnapshot {
     advertType: job.advertType,
     nodeName: job.nodeName,
     nodePublicKey: job.nodePublicKey,
-    rawPacketHex: job.rawPacketHex,
     observerId: job.observerId,
     observerName: job.observerName,
     radioParams: { ...job.radioParams },
     advertLabel: job.logContext.advertLabel,
     observerLabel: job.logContext.observerLabel,
   };
+}
+
+function isPreferredAdvertLocation(
+  candidate: DashboardAdvertLocation,
+  current: DashboardAdvertLocation
+): boolean {
+  const candidatePriority = ADVERT_STATUS_PRIORITY[candidate.status];
+  const currentPriority = ADVERT_STATUS_PRIORITY[current.status];
+  if (candidatePriority !== currentPriority) {
+    return candidatePriority > currentPriority;
+  }
+
+  const atComparison = candidate.at.localeCompare(current.at);
+  if (atComparison !== 0) {
+    return atComparison > 0;
+  }
+
+  return candidate.updatedAt.localeCompare(current.updatedAt) > 0;
 }
 
 export interface DashboardStateOptions {
@@ -348,7 +370,7 @@ export class DashboardState {
         }),
       queueHistory: [...this.queueHistory],
       workers: [...this.workers.values()].sort((a, b) => a.index - b.index),
-      advertsLastHour: [...this.adverts.values()].sort((a, b) => a.at.localeCompare(b.at)),
+      advertsLastHour: this.preferredAdvertLocations().sort((a, b) => a.at.localeCompare(b.at)),
     };
   }
 
@@ -401,6 +423,19 @@ export class DashboardState {
     advert.statusDetail = statusDetail;
     advert.responseFromMeshcoreIO = responseFromMeshcoreIO;
     advert.updatedAt = this.isoNow();
+  }
+
+  private preferredAdvertLocations(): DashboardAdvertLocation[] {
+    const preferredByNode = new Map<string, DashboardAdvertLocation>();
+
+    for (const advert of this.adverts.values()) {
+      const existing = preferredByNode.get(advert.nodePublicKey);
+      if (!existing || isPreferredAdvertLocation(advert, existing)) {
+        preferredByNode.set(advert.nodePublicKey, advert);
+      }
+    }
+
+    return [...preferredByNode.values()];
   }
 
   private cleanupAdvertLocations(): void {

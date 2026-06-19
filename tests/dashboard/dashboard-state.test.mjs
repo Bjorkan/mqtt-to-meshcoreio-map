@@ -26,7 +26,6 @@ function makeJob(overrides = {}) {
     advertType: overrides.advertType ?? "REPEATER",
     nodeName: overrides.nodeName ?? "SE-STO-TEST",
     nodePublicKey,
-    rawPacketHex: overrides.rawPacketHex ?? "deadbeef",
     observerId: overrides.observerId ?? "observer-1",
     observerName: overrides.observerName ?? "SE-STO-OBSERVER",
     radioParams: overrides.radioParams ?? { freq: 869.5, bw: 125, sf: 9, cr: 5 },
@@ -91,6 +90,44 @@ test("queueDropped leaves advert visible as rejected while archiving queue item"
   assert.equal(snapshot.advertsLastHour[0].requestId, job.requestId);
   assert.equal(snapshot.advertsLastHour[0].status, "rejected");
   assert.equal(snapshot.advertsLastHour[0].statusDetail, "Upload queue is full.");
+});
+
+test("snapshot exposes one advert per node with green-yellow-red priority", () => {
+  const clock = makeClock();
+  const state = new DashboardState({ now: clock.now });
+  const greenNodeKey = "b".repeat(64);
+  const yellowNodeKey = "c".repeat(64);
+
+  const greenAccepted = makeJob({ requestId: "green-accepted", nodePublicKey: greenNodeKey });
+  recordLocation(state, greenAccepted);
+  state.queueHandled(greenAccepted, '{"code":"NODES_INSERTED"}');
+
+  clock.advance(1000);
+  const greenPending = makeJob({ requestId: "green-pending", nodePublicKey: greenNodeKey });
+  recordLocation(state, greenPending);
+
+  clock.advance(1000);
+  const greenRejected = makeJob({ requestId: "green-rejected", nodePublicKey: greenNodeKey });
+  recordLocation(state, greenRejected);
+  state.advertIgnored(greenRejected.requestId, "Rejected later.");
+
+  clock.advance(1000);
+  const yellowPending = makeJob({ requestId: "yellow-pending", nodePublicKey: yellowNodeKey });
+  recordLocation(state, yellowPending);
+
+  clock.advance(1000);
+  const yellowRejected = makeJob({ requestId: "yellow-rejected", nodePublicKey: yellowNodeKey });
+  recordLocation(state, yellowRejected);
+  state.advertIgnored(yellowRejected.requestId, "Rejected later.");
+
+  const snapshot = state.snapshot();
+  const byNode = new Map(snapshot.advertsLastHour.map((advert) => [advert.nodePublicKey, advert]));
+
+  assert.equal(snapshot.advertsLastHour.length, 2);
+  assert.equal(byNode.get(greenNodeKey)?.requestId, greenAccepted.requestId);
+  assert.equal(byNode.get(greenNodeKey)?.status, "accepted");
+  assert.equal(byNode.get(yellowNodeKey)?.requestId, yellowPending.requestId);
+  assert.equal(byNode.get(yellowNodeKey)?.status, "pending");
 });
 
 test("advert locations expire after the last-hour window", () => {
