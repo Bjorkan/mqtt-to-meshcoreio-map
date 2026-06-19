@@ -92,42 +92,45 @@ test("queueDropped leaves advert visible as rejected while archiving queue item"
   assert.equal(snapshot.advertsLastHour[0].statusDetail, "Upload queue is full.");
 });
 
-test("snapshot exposes one advert per node with green-yellow-red priority", () => {
+test("snapshot prefers a newer rejected advert over an older accepted advert for the same node", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
-  const greenNodeKey = "b".repeat(64);
-  const yellowNodeKey = "c".repeat(64);
+  const nodePublicKey = "b".repeat(64);
 
-  const greenAccepted = makeJob({ requestId: "green-accepted", nodePublicKey: greenNodeKey });
-  recordLocation(state, greenAccepted);
-  state.queueHandled(greenAccepted, '{"code":"NODES_INSERTED"}');
-
-  clock.advance(1000);
-  const greenPending = makeJob({ requestId: "green-pending", nodePublicKey: greenNodeKey });
-  recordLocation(state, greenPending);
+  const accepted = makeJob({ requestId: "older-accepted", nodePublicKey });
+  recordLocation(state, accepted);
+  state.queueHandled(accepted, '{"code":"NODES_INSERTED"}');
 
   clock.advance(1000);
-  const greenRejected = makeJob({ requestId: "green-rejected", nodePublicKey: greenNodeKey });
-  recordLocation(state, greenRejected);
-  state.advertIgnored(greenRejected.requestId, "Rejected later.");
-
-  clock.advance(1000);
-  const yellowPending = makeJob({ requestId: "yellow-pending", nodePublicKey: yellowNodeKey });
-  recordLocation(state, yellowPending);
-
-  clock.advance(1000);
-  const yellowRejected = makeJob({ requestId: "yellow-rejected", nodePublicKey: yellowNodeKey });
-  recordLocation(state, yellowRejected);
-  state.advertIgnored(yellowRejected.requestId, "Rejected later.");
+  const rejected = makeJob({ requestId: "newer-rejected", nodePublicKey });
+  recordLocation(state, rejected);
+  state.advertIgnored(rejected.requestId, "Rejected later.");
 
   const snapshot = state.snapshot();
-  const byNode = new Map(snapshot.advertsLastHour.map((advert) => [advert.nodePublicKey, advert]));
 
-  assert.equal(snapshot.advertsLastHour.length, 2);
-  assert.equal(byNode.get(greenNodeKey)?.requestId, greenAccepted.requestId);
-  assert.equal(byNode.get(greenNodeKey)?.status, "accepted");
-  assert.equal(byNode.get(yellowNodeKey)?.requestId, yellowPending.requestId);
-  assert.equal(byNode.get(yellowNodeKey)?.status, "pending");
+  assert.equal(snapshot.advertsLastHour.length, 1);
+  assert.equal(snapshot.advertsLastHour[0].requestId, rejected.requestId);
+  assert.equal(snapshot.advertsLastHour[0].status, "rejected");
+});
+
+test("snapshot prefers a newer pending advert over an older accepted advert for the same node", () => {
+  const clock = makeClock();
+  const state = new DashboardState({ now: clock.now });
+  const nodePublicKey = "c".repeat(64);
+
+  const accepted = makeJob({ requestId: "older-accepted", nodePublicKey });
+  recordLocation(state, accepted);
+  state.queueHandled(accepted, '{"code":"NODES_INSERTED"}');
+
+  clock.advance(1000);
+  const pending = makeJob({ requestId: "newer-pending", nodePublicKey });
+  recordLocation(state, pending);
+
+  const snapshot = state.snapshot();
+
+  assert.equal(snapshot.advertsLastHour.length, 1);
+  assert.equal(snapshot.advertsLastHour[0].requestId, pending.requestId);
+  assert.equal(snapshot.advertsLastHour[0].status, "pending");
 });
 
 test("advert locations expire after the last-hour window", () => {
@@ -173,5 +176,5 @@ test("worker states move through uploading, cooldown, and idle", () => {
 
   state.workerIdle("worker-1");
   assert.equal(state.snapshot().workers[0].state, "idle");
-  assert.equal(state.snapshot().workers[0].currentJob, undefined);
+  assert.equal(snapshot.workers[0].currentJob, undefined);
 });
