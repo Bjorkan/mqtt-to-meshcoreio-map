@@ -176,5 +176,5 @@ test("worker states move through uploading, cooldown, and idle", () => {
 
   state.workerIdle("worker-1");
   assert.equal(state.snapshot().workers[0].state, "idle");
-  assert.equal(snapshot.workers[0].currentJob, undefined);
+  assert.equal(state.snapshot().workers[0].currentJob, undefined);
 });
