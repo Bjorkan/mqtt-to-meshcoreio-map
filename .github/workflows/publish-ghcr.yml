@@ -15,6 +15,7 @@ permissions:
 env:
   GHCR_REGISTRY: ghcr.io
   DOCKERHUB_IMAGE: bjorkan/mqtt-to-meshcoreio-map
+  IMAGE_DESCRIPTION: MQTT to MeshCore.io Map bridge that listens to a MeshCore MQTT broker and uploads verified MeshCore adverts to the MeshCore.io map.
 
 jobs:
   publish:
@@ -100,6 +101,12 @@ jobs:
           tags: |
             type=raw,value=edge,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+          labels: |
+            org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}
+          annotations: |
+            org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
 
       - name: Build and publish image
         uses: docker/build-push-action@v6
@@ -109,3 +116,4 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
