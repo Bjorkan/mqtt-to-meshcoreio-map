@@ -24,10 +24,13 @@ import type { AdvertLogContext, MapUploaderConfig, MapUploaderDependencies, Obse
 import type { DashboardState } from "../dashboard/dashboard-state.js";
 import type { ObserverStatusStore } from "../persistence-store.js";
 
+const VALID_ADVERT_COOLDOWN_MS = 60 * 60 * 1000;
+
 export class MqttBrokerAdvertReader {
   private readonly now: () => number;
   private readonly observers = new Map<string, ObserverState>();
   private readonly seenAdverts = new Map<string, number>();
+  private readonly recentValidAdverts = new Map<string, number>();
   private readonly recentDropLogs = new Map<string, number>();
 
   constructor(
@@ -189,13 +192,22 @@ export class MqttBrokerAdvertReader {
         this.logAdvertDrop(requestId, `replay:${advertKey}:${previousTimestamp}`, `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} was already heard at timestamp ${previousTimestamp}. Dropping.`);
         return;
       }
+    }
 
+    const previousValidAdvertAt = this.recentValidAdverts.get(pubKey);
+    if (previousValidAdvertAt !== undefined && this.now() - previousValidAdvertAt < VALID_ADVERT_COOLDOWN_MS) {
+      this.logAdvertDrop(requestId, `cooldown:${pubKey}`, `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is on internal ${formatSeconds(VALID_ADVERT_COOLDOWN_MS / 1000)} cooldown after the first valid advert. Dropping.`);
+      return;
+    }
+
+    if (previousTimestamp !== undefined) {
       if (advert.timestamp < previousTimestamp + this.config.minReuploadIntervalSeconds) {
         this.logAdvertDrop(requestId, `reupload:${advertKey}:${previousTimestamp}`, `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is ${formatSeconds(advert.timestamp - previousTimestamp)} newer than the last upload; minimum reupload interval is ${formatSeconds(this.config.minReuploadIntervalSeconds)}. Dropping.`);
         return;
       }
     }
 
+    this.recentValidAdverts.set(pubKey, this.now());
     await this.queue.registerAdvert({
       requestId,
       retriesAllowed: this.config.retriesAllowed,
@@ -291,6 +303,13 @@ export class MqttBrokerAdvertReader {
     for (const [pubKey, timestamp] of this.seenAdverts) {
       if (timestamp < oldestAdvertTimestamp) {
         this.seenAdverts.delete(pubKey);
+      }
+    }
+
+    const oldestValidAdvert = now - VALID_ADVERT_COOLDOWN_MS;
+    for (const [pubKey, heardAt] of this.recentValidAdverts) {
+      if (heardAt < oldestValidAdvert) {
+        this.recentValidAdverts.delete(pubKey);
       }
     }
 

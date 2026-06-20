@@ -291,7 +291,6 @@ const DASHBOARD_HTML = `<!doctype html>
       cursor: pointer;
     }
     .icon-button:hover { border-color: var(--accent); }
-    #history-list { max-height: 360px; }
     @media (max-width: 940px) {
       .panels { grid-template-columns: 1fr; }
       .panels > section { height: 360px; }
@@ -334,6 +333,12 @@ const DASHBOARD_HTML = `<!doctype html>
         <h2>Workers</h2>
         <div class="list" id="workers"></div>
       </section>
+      <section>
+        <div class="section-head">
+          <h2>History</h2>
+        </div>
+        <div class="list" id="history-list"></div>
+      </section>
     </div>
     <section class="map-section" id="map-section">
       <div class="section-head">
@@ -341,12 +346,6 @@ const DASHBOARD_HTML = `<!doctype html>
         <button class="icon-button" id="map-fullscreen" type="button" title="Fullscreen map">Fullscreen</button>
       </div>
       <div class="map" id="map" aria-label="Accepted advert locations from the last 24 hours"></div>
-    </section>
-    <section>
-      <div class="section-head">
-        <h2>History</h2>
-      </div>
-      <div class="list" id="history-list"></div>
     </section>
   </main>
   <dialog id="detail-dialog">

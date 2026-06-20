@@ -58,7 +58,7 @@ test('uploads verified packets.raw adverts with firmware radio parameters', asyn
   assert.deepEqual(data.links, [`meshcore://${hex(packet)}`]);
 });
 
-test('silently ignores duplicate adverts already queued or in flight', async () => {
+test('drops duplicate adverts already queued or in flight on internal cooldown', async () => {
   let releaseFetch;
   const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
     fetch: async () => {
@@ -87,7 +87,8 @@ test('silently ignores duplicate adverts already queued or in flight', async () 
   releaseFetch();
   await first;
 
-  assert.deepEqual(logs, []);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /is on internal 3600s cooldown after the first valid advert\. Dropping\./);
 });
 
 test('does not log successful observer status updates as map uploads', async () => {
@@ -689,8 +690,9 @@ test('applies replay, reupload interval, and queued upload retry', async () => {
     await uploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(tooSoon) })));
   });
   assert.equal(requests.length, 1);
-  assert.match(logs.at(-1), /is 100s newer than the last upload; minimum reupload interval is 3600s\. Dropping\./);
+  assert.match(logs.at(-1), /is on internal 3600s cooldown after the first valid advert\. Dropping\./);
 
+  now += 60 * 60 * 1000;
   const later = makeAdvertPacket({ timestamp: 1_800_003_700 });
   await uploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(later) })));
   assert.equal(requests.length, 2);
@@ -716,6 +718,45 @@ test('applies replay, reupload interval, and queued upload retry', async () => {
   assert.equal(retryRequests.length, 2);
   assert.match(logs.join('\n'), /Upload failed for SE-STO-TEST \([0-9a-f]{6}\): meshcore\.io responded 500: nope\. Going to the back of the queue, 2 retries allowed\./);
   assert.match(logs.at(-1), /Meshcore\.io accepted advert for SE-STO-TEST \([0-9a-f]{6}\): {"ok":true}/);
+});
+
+test('holds a valid advert on in-memory cooldown for one hour across observers', async () => {
+  const { fetch, requests } = makeFetch();
+  let now = 10_000;
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
+    fetch,
+    now: () => now,
+  }));
+  const secondObserverId = 'b2'.repeat(32);
+
+  await rememberDefaultStatus(uploader);
+  await uploader.processMqttMessage(
+    `meshcore/STO/${secondObserverId}/status`,
+    statusPayload({ origin: 'SE-STO-OBSERVER-2', origin_id: secondObserverId })
+  );
+
+  await uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_200_000 })) }))
+  );
+
+  let logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage(
+      `meshcore/STO/${secondObserverId}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: secondObserverId, data: hex(makeAdvertPacket({ timestamp: 1_800_203_700 })) }))
+    );
+  });
+
+  assert.equal(requests.length, 1);
+  assert.match(logs.at(-1), /is on internal 3600s cooldown after the first valid advert\. Dropping\./);
+
+  now += 60 * 60 * 1000;
+  await uploader.processMqttMessage(
+    `meshcore/STO/${secondObserverId}/raw`,
+    Buffer.from(JSON.stringify({ origin_id: secondObserverId, data: hex(makeAdvertPacket({ timestamp: 1_800_207_400 })) }))
+  );
+
+  assert.equal(requests.length, 2);
 });
 
 test('suppresses repeated drop logs for the same advert and reason', async () => {
