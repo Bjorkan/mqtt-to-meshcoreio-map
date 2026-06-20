@@ -1,15 +1,18 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { connect, type Database } from "@tursodatabase/database";
 import type { ObserverState } from "./map-types.js";
 import type { DashboardAdvertLocation, DashboardQueueItem } from "./dashboard/dashboard-state.js";
 
+type MaybePromise<T> = T | Promise<T>;
+
 export interface ObserverStatusStore {
-  loadAll(): ObserverState[];
-  upsert(status: ObserverState): void;
-  delete(originId: string): void;
-  deleteOlderThan(updatedAt: number): void;
-  close?(): void;
+  ready?: Promise<void>;
+  loadAll(): MaybePromise<ObserverState[]>;
+  upsert(status: ObserverState): MaybePromise<void>;
+  delete(originId: string): MaybePromise<void>;
+  deleteOlderThan(updatedAt: number): MaybePromise<void>;
+  close?(): MaybePromise<void>;
 }
 
 export interface MeshcoreHistoryRecord {
@@ -18,9 +21,10 @@ export interface MeshcoreHistoryRecord {
 }
 
 export interface MeshcoreHistoryStore {
-  loadMeshcoreHistory(): MeshcoreHistoryRecord[];
-  upsertMeshcoreHistory(record: MeshcoreHistoryRecord): void;
-  deleteMeshcoreHistoryOlderThan(updatedAt: number): void;
+  ready?: Promise<void>;
+  loadMeshcoreHistory(): MaybePromise<MeshcoreHistoryRecord[]>;
+  upsertMeshcoreHistory(record: MeshcoreHistoryRecord): MaybePromise<void>;
+  deleteMeshcoreHistoryOlderThan(updatedAt: number): MaybePromise<void>;
 }
 
 export type PersistenceStore = ObserverStatusStore & MeshcoreHistoryStore;
@@ -40,16 +44,21 @@ interface MeshcoreHistoryRow {
   advert_json: string | null;
 }
 
-export class SqlitePersistenceStore implements PersistenceStore {
-  private readonly db: DatabaseSync;
+export class TursoPersistenceStore implements PersistenceStore {
+  private db?: Database;
+  readonly ready: Promise<void>;
 
   constructor(path: string) {
+    this.ready = this.open(path);
+  }
+
+  private async open(path: string): Promise<void> {
     if (path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true });
     }
 
-    this.db = new DatabaseSync(path);
-    this.db.exec(`
+    this.db = await connect(path);
+    await this.db.exec(`
       CREATE TABLE IF NOT EXISTS observer_statuses (
         origin_id TEXT PRIMARY KEY,
         origin TEXT,
@@ -73,12 +82,21 @@ export class SqlitePersistenceStore implements PersistenceStore {
     `);
   }
 
-  loadAll(): ObserverState[] {
-    const rows = this.db.prepare(`
+  private async database(): Promise<Database> {
+    await this.ready;
+    if (!this.db) {
+      throw new Error("Turso database connection is not open.");
+    }
+    return this.db;
+  }
+
+  async loadAll(): Promise<ObserverState[]> {
+    const db = await this.database();
+    const rows = await db.all(`
       SELECT origin_id, origin, freq, cr, sf, bw, updated_at
       FROM observer_statuses
       ORDER BY updated_at ASC
-    `).all() as unknown as ObserverStatusRow[];
+    `) as unknown as ObserverStatusRow[];
 
     return rows.map((row) => ({
       origin: row.origin ?? undefined,
@@ -93,7 +111,7 @@ export class SqlitePersistenceStore implements PersistenceStore {
     }));
   }
 
-  upsert(status: ObserverState): void {
+  async upsert(status: ObserverState): Promise<void> {
     if (!status.originId) {
       return;
     }
@@ -103,7 +121,8 @@ export class SqlitePersistenceStore implements PersistenceStore {
       return;
     }
 
-    this.db.prepare(`
+    const db = await this.database();
+    await db.run(`
       INSERT INTO observer_statuses (origin_id, origin, freq, cr, sf, bw, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(origin_id) DO UPDATE SET
@@ -113,23 +132,26 @@ export class SqlitePersistenceStore implements PersistenceStore {
         sf = excluded.sf,
         bw = excluded.bw,
         updated_at = excluded.updated_at
-    `).run(status.originId, status.origin ?? null, freq, cr, sf, bw, status.updatedAt);
+    `, status.originId, status.origin ?? null, freq, cr, sf, bw, status.updatedAt);
   }
 
-  delete(originId: string): void {
-    this.db.prepare("DELETE FROM observer_statuses WHERE origin_id = ?").run(originId);
+  async delete(originId: string): Promise<void> {
+    const db = await this.database();
+    await db.run("DELETE FROM observer_statuses WHERE origin_id = ?", originId);
   }
 
-  deleteOlderThan(updatedAt: number): void {
-    this.db.prepare("DELETE FROM observer_statuses WHERE updated_at < ?").run(updatedAt);
+  async deleteOlderThan(updatedAt: number): Promise<void> {
+    const db = await this.database();
+    await db.run("DELETE FROM observer_statuses WHERE updated_at < ?", updatedAt);
   }
 
-  loadMeshcoreHistory(): MeshcoreHistoryRecord[] {
-    const rows = this.db.prepare(`
+  async loadMeshcoreHistory(): Promise<MeshcoreHistoryRecord[]> {
+    const db = await this.database();
+    const rows = await db.all(`
       SELECT queue_item_json, advert_json
       FROM meshcore_history
       ORDER BY updated_at DESC
-    `).all() as unknown as MeshcoreHistoryRow[];
+    `) as unknown as MeshcoreHistoryRow[];
 
     const records: MeshcoreHistoryRecord[] = [];
     for (const row of rows) {
@@ -146,20 +168,21 @@ export class SqlitePersistenceStore implements PersistenceStore {
     return records;
   }
 
-  upsertMeshcoreHistory(record: MeshcoreHistoryRecord): void {
+  async upsertMeshcoreHistory(record: MeshcoreHistoryRecord): Promise<void> {
     const updatedAt = Date.parse(record.queueItem.updatedAt);
     if (!Number.isFinite(updatedAt)) {
       return;
     }
 
-    this.db.prepare(`
+    const db = await this.database();
+    await db.run(`
       INSERT INTO meshcore_history (request_id, updated_at, queue_item_json, advert_json)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(request_id) DO UPDATE SET
         updated_at = excluded.updated_at,
         queue_item_json = excluded.queue_item_json,
         advert_json = excluded.advert_json
-    `).run(
+    `,
       record.queueItem.job.requestId,
       updatedAt,
       JSON.stringify(record.queueItem),
@@ -167,11 +190,15 @@ export class SqlitePersistenceStore implements PersistenceStore {
     );
   }
 
-  deleteMeshcoreHistoryOlderThan(updatedAt: number): void {
-    this.db.prepare("DELETE FROM meshcore_history WHERE updated_at < ?").run(updatedAt);
+  async deleteMeshcoreHistoryOlderThan(updatedAt: number): Promise<void> {
+    const db = await this.database();
+    await db.run("DELETE FROM meshcore_history WHERE updated_at < ?", updatedAt);
   }
 
-  close(): void {
-    this.db.close();
+  async close(): Promise<void> {
+    await this.ready;
+    if (this.db?.open) {
+      await this.db.close();
+    }
   }
 }

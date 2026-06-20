@@ -94,7 +94,7 @@ test("queueHandled leaves advert visible as accepted while archiving queue item"
   assert.equal(snapshot.advertsLast24Hours[0].responseFromMeshcoreIO, '{"code":"NODES_INSERTED"}');
 });
 
-test("queueHandled persists MeshCore.io history with any server response and reloads it after restart", () => {
+test("queueHandled persists MeshCore.io history with any server response and reloads it after restart", async () => {
   const clock = makeClock();
   const store = new FakeMeshcoreHistoryStore();
   const firstState = new DashboardState({ now: clock.now, meshcoreHistoryStore: store });
@@ -103,10 +103,12 @@ test("queueHandled persists MeshCore.io history with any server response and rel
   recordLocation(firstState, job);
   firstState.queueAdded(job, 1);
   firstState.queueHandled(job, '{"code":"ERR_ADVERT_DUPLICATE"}');
+  await firstState.flushPersistence();
 
   assert.equal(store.records.length, 1);
 
   const secondState = new DashboardState({ now: clock.now, meshcoreHistoryStore: store });
+  await secondState.ready;
   const snapshot = secondState.snapshot();
 
   assert.equal(snapshot.queueHistory.length, 1);

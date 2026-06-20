@@ -30,7 +30,10 @@ export class MeshcoreMapUploader {
     );
 
     this.reader = new MqttBrokerAdvertReader(config, queue, dependencies);
-    this.ready = Promise.all(posters.map((poster) => poster.ready)).then(() => undefined);
+    this.ready = Promise.all([
+      this.reader.ready,
+      ...posters.map((poster) => poster.ready),
+    ]).then(() => undefined);
   }
 
   handleMqttMessage(topic: string, payload: Buffer): void {

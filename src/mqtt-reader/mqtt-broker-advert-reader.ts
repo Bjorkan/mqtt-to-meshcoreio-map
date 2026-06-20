@@ -32,6 +32,7 @@ export class MqttBrokerAdvertReader {
   private readonly seenAdverts = new Map<string, number>();
   private readonly recentValidAdverts = new Map<string, number>();
   private readonly recentDropLogs = new Map<string, number>();
+  readonly ready: Promise<void>;
 
   constructor(
     private readonly config: MapUploaderConfig,
@@ -41,7 +42,7 @@ export class MqttBrokerAdvertReader {
     this.now = dependencies.now ?? Date.now;
     this.dashboardState = dependencies.dashboardState;
     this.observerStatusStore = dependencies.observerStatusStore;
-    this.loadPersistedObserverStatuses();
+    this.ready = this.loadPersistedObserverStatuses();
   }
 
   private readonly dashboardState?: DashboardState;
@@ -54,16 +55,18 @@ export class MqttBrokerAdvertReader {
   }
 
   async processMqttMessage(topic: string, payload: Buffer): Promise<void> {
+    await this.ready;
+
     if (!this.config.enabled) {
       this.dashboardState?.recordDecision(`Map uploader disabled; ignoring MQTT message on ${topic}.`);
       return;
     }
 
-    this.cleanupState();
+    await this.cleanupState();
 
     const type = getTopicType(topic);
     if (type === "status") {
-      this.rememberStatus(topic, payload);
+      await this.rememberStatus(topic, payload);
       return;
     }
 
@@ -86,7 +89,7 @@ export class MqttBrokerAdvertReader {
     }
   }
 
-  private rememberStatus(topic: string, payload: Buffer): void {
+  private async rememberStatus(topic: string, payload: Buffer): Promise<void> {
     const parsed = parseJsonPayload(payload);
     if (typeof parsed !== "object" || parsed === null) {
       warnMapUpload(`Status on ${topic} is not JSON. Dropping.`);
@@ -121,7 +124,7 @@ export class MqttBrokerAdvertReader {
     };
 
     this.observers.set(originId, state);
-    this.observerStatusStore?.upsert(state);
+    await this.observerStatusStore?.upsert(state);
   }
 
   private async processPacket(candidate: { rawPacket: Buffer; observerId?: string }): Promise<void> {
@@ -274,30 +277,30 @@ export class MqttBrokerAdvertReader {
     return `${pubKey}:${timestamp}`;
   }
 
-  private loadPersistedObserverStatuses(): void {
+  private async loadPersistedObserverStatuses(): Promise<void> {
     if (!this.observerStatusStore) {
       return;
     }
 
     const oldestObserverStatus = this.now() - OBSERVER_TTL_MS;
-    this.observerStatusStore.deleteOlderThan(oldestObserverStatus);
-    for (const observer of this.observerStatusStore.loadAll()) {
+    await this.observerStatusStore.deleteOlderThan(oldestObserverStatus);
+    for (const observer of await this.observerStatusStore.loadAll()) {
       if (observer.originId && observer.updatedAt >= oldestObserverStatus) {
         this.observers.set(observer.originId, observer);
       }
     }
   }
 
-  private cleanupState(): void {
+  private async cleanupState(): Promise<void> {
     const now = this.now();
 
     for (const [observerId, observer] of this.observers) {
       if (now - observer.updatedAt > OBSERVER_TTL_MS) {
         this.observers.delete(observerId);
-        this.observerStatusStore?.delete(observerId);
+        await this.observerStatusStore?.delete(observerId);
       }
     }
-    this.observerStatusStore?.deleteOlderThan(now - OBSERVER_TTL_MS);
+    await this.observerStatusStore?.deleteOlderThan(now - OBSERVER_TTL_MS);
 
     const oldestAdvertTimestamp = Math.floor(now / 1000) - SEEN_ADVERT_TTL_SECONDS;
     for (const [pubKey, timestamp] of this.seenAdverts) {

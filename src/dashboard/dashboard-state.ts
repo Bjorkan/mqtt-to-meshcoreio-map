@@ -136,8 +136,10 @@ export class DashboardState {
   private readonly adverts = new Map<string, DashboardAdvertLocation>();
   private readonly queueItems = new Map<string, DashboardQueueItem>();
   private readonly queueHistory: DashboardQueueItem[] = [];
+  private readonly persistenceTasks = new Set<Promise<void>>();
   private readonly workers = new Map<string, DashboardWorkerSnapshot>();
   private mqttSource: DashboardMqttSourceStatus;
+  readonly ready: Promise<void>;
 
   constructor(options: DashboardStateOptions = {}) {
     this.now = options.now ?? (() => new Date());
@@ -147,7 +149,7 @@ export class DashboardState {
       detail: "Not connected yet.",
       updatedAt: this.isoNow(),
     };
-    this.loadPersistedMeshcoreHistory();
+    this.ready = this.loadPersistedMeshcoreHistory();
   }
 
   configureWorkers(workerIds: string[]): void {
@@ -285,7 +287,14 @@ export class DashboardState {
     this.updateAdvertStatus(job.requestId, "accepted", "MeshCore.io handled the upload request.", responseFromMeshcoreIO);
     const archived = this.archiveQueueItem(job.requestId);
     if (archived && responseFromMeshcoreIO !== undefined) {
-      this.persistMeshcoreHistory(archived, this.adverts.get(job.requestId));
+      const task = this.persistMeshcoreHistory(archived, this.adverts.get(job.requestId))
+        .catch((error: Error) => {
+          this.recordLog(`Could not persist MeshCore.io history: ${error.message}`, "warn", "dashboard");
+        })
+        .finally(() => {
+          this.persistenceTasks.delete(task);
+        });
+      this.persistenceTasks.add(task);
     }
   }
 
@@ -359,6 +368,11 @@ export class DashboardState {
     };
   }
 
+  async flushPersistence(): Promise<void> {
+    await this.ready;
+    await Promise.all([...this.persistenceTasks]);
+  }
+
   private upsertQueueItem(
     job: MapUploadWorkRequest,
     state: DashboardQueueItem["state"],
@@ -411,13 +425,13 @@ export class DashboardState {
     advert.updatedAt = this.isoNow();
   }
 
-  private loadPersistedMeshcoreHistory(): void {
+  private async loadPersistedMeshcoreHistory(): Promise<void> {
     if (!this.meshcoreHistoryStore) {
       return;
     }
 
-    this.cleanupMeshcoreHistory();
-    for (const record of this.meshcoreHistoryStore.loadMeshcoreHistory()) {
+    await this.cleanupMeshcoreHistory();
+    for (const record of await this.meshcoreHistoryStore.loadMeshcoreHistory()) {
       if (!this.isRecentIso(record.queueItem.updatedAt)) {
         continue;
       }
@@ -443,19 +457,19 @@ export class DashboardState {
     }
   }
 
-  private persistMeshcoreHistory(
+  private async persistMeshcoreHistory(
     queueItem: DashboardQueueItem,
     advert: DashboardAdvertLocation | undefined
-  ): void {
-    this.meshcoreHistoryStore?.upsertMeshcoreHistory({
+  ): Promise<void> {
+    await this.meshcoreHistoryStore?.upsertMeshcoreHistory({
       queueItem,
       advert,
     });
-    this.cleanupMeshcoreHistory();
+    await this.cleanupMeshcoreHistory();
   }
 
-  private cleanupMeshcoreHistory(): void {
-    this.meshcoreHistoryStore?.deleteMeshcoreHistoryOlderThan(this.now().getTime() - DASHBOARD_HISTORY_MS);
+  private async cleanupMeshcoreHistory(): Promise<void> {
+    await this.meshcoreHistoryStore?.deleteMeshcoreHistoryOlderThan(this.now().getTime() - DASHBOARD_HISTORY_MS);
   }
 
   private isRecentIso(value: string): boolean {

@@ -49,7 +49,7 @@ function makeConfig(overrides = {}) {
     reconnectPeriodMs: 10,
     connectTimeoutMs: 100,
     rejectUnauthorized: true,
-    sqlitePath: ":memory:",
+    tursoPath: ":memory:",
     mapUploader: {
       enabled: true,
       apiUrl: "https://map.meshcore.io/api/v1/uploader/node",
@@ -69,7 +69,7 @@ test("loads runtime configuration from environment with production defaults", ()
   assert.equal(defaults.sourceUrl, "mqtt://localhost:1883");
   assert.equal(defaults.sourceClientId, "mqtt-to-meshcoreio-map");
   assert.equal(defaults.topicFilter, "meshcore/#");
-  assert.equal(defaults.sqlitePath, "/data/mqtt-to-meshcoreio-map.sqlite");
+  assert.equal(defaults.tursoPath, "/data/mqtt-to-meshcoreio-map.turso");
   assert.equal(defaults.mapUploader.enabled, true);
   assert.equal(defaults.mapUploader.apiUrl, "https://map.meshcore.io/api/v1/uploader/node");
 
@@ -80,7 +80,7 @@ test("loads runtime configuration from environment with production defaults", ()
     SOURCE_CLIENT_ID: "map-uploader",
     TOPIC_FILTER: "custom/#",
     SOURCE_REJECT_UNAUTHORIZED: "false",
-    SQLITE_PATH: "/tmp/map.sqlite",
+    TURSO_PATH: "/tmp/map.turso",
     MESHCOREIO_API_URL: "https://map.example/api",
     MESHCOREIO_DRY_RUN: "true",
     MESHCOREIO_WORKERS: "4",
@@ -94,12 +94,20 @@ test("loads runtime configuration from environment with production defaults", ()
   assert.equal(configured.sourceClientId, "map-uploader");
   assert.equal(configured.topicFilter, "custom/#");
   assert.equal(configured.rejectUnauthorized, false);
-  assert.equal(configured.sqlitePath, "/tmp/map.sqlite");
+  assert.equal(configured.tursoPath, "/tmp/map.turso");
   assert.equal(configured.mapUploader.apiUrl, "https://map.example/api");
   assert.equal(configured.mapUploader.dryRun, true);
   assert.equal(configured.mapUploader.maxConcurrentUploads, 4);
   assert.equal(configured.mapUploader.maxQueuedUploads, 50);
   assert.equal(configured.mapUploader.retriesAllowed, 5);
+});
+
+test("supports SQLITE_PATH as a backward-compatible Turso path fallback", () => {
+  const configured = loadConfig({
+    SQLITE_PATH: "/tmp/legacy-map.sqlite",
+  });
+
+  assert.equal(configured.tursoPath, "/tmp/legacy-map.sqlite");
 });
 
 test("falls back for invalid numeric environment values", () => {

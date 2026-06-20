@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import {
   createMapUploadSigningIdentity,
   MeshcoreMapUploader,
-  SqlitePersistenceStore,
+  TursoPersistenceStore,
 } from '../../dist/map-uploader.js';
 import { DashboardState } from '../../dist/dashboard/dashboard-state.js';
 import {
@@ -356,22 +356,24 @@ test('drops observer radio status after one hour without a new valid status', as
   assert.equal(requests.length, 0);
 });
 
-test('loads persisted observer radio status from SQLite after restart', async () => {
+test('loads persisted observer radio status from Turso after restart', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'mqtt-to-map-observers-'));
-  const dbPath = join(directory, 'mqtt-to-meshcoreio-map.sqlite');
+  const dbPath = join(directory, 'mqtt-to-meshcoreio-map.turso');
 
   try {
-    const firstStore = new SqlitePersistenceStore(dbPath);
+    const firstStore = new TursoPersistenceStore(dbPath);
+    await firstStore.ready;
     const firstUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
       fetch: makeFetch().fetch,
       observerStatusStore: firstStore,
       now: () => 1_000_000,
     }));
     await rememberDefaultStatus(firstUploader);
-    firstStore.close();
+    await firstStore.close();
 
     const { fetch, requests } = makeFetch();
-    const secondStore = new SqlitePersistenceStore(dbPath);
+    const secondStore = new TursoPersistenceStore(dbPath);
+    await secondStore.ready;
     const secondUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
       fetch,
       observerStatusStore: secondStore,
@@ -390,35 +392,38 @@ test('loads persisted observer radio status from SQLite after restart', async ()
       sf: 8,
       cr: 8,
     });
-    secondStore.close();
+    await secondStore.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test('removes persisted observer radio status older than one hour', () => {
+test('removes persisted observer radio status older than one hour', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'mqtt-to-map-observers-'));
-  const dbPath = join(directory, 'mqtt-to-meshcoreio-map.sqlite');
+  const dbPath = join(directory, 'mqtt-to-meshcoreio-map.turso');
 
   try {
-    const firstStore = new SqlitePersistenceStore(dbPath);
-    firstStore.upsert({
+    const firstStore = new TursoPersistenceStore(dbPath);
+    await firstStore.ready;
+    await firstStore.upsert({
       origin: 'SE-STO-OBSERVER',
       originId: OBSERVER_ID,
       params: { freq: 869.618, bw: 62.5, sf: 8, cr: 8 },
       updatedAt: 1_000_000,
     });
-    firstStore.close();
+    await firstStore.close();
 
-    const secondStore = new SqlitePersistenceStore(dbPath);
-    new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
+    const secondStore = new TursoPersistenceStore(dbPath);
+    await secondStore.ready;
+    const secondUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
       fetch: makeFetch().fetch,
       observerStatusStore: secondStore,
       now: () => 1_000_000 + 60 * 60 * 1000 + 1,
     }));
+    await secondUploader.ready;
 
-    assert.deepEqual(secondStore.loadAll(), []);
-    secondStore.close();
+    assert.deepEqual(await secondStore.loadAll(), []);
+    await secondStore.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

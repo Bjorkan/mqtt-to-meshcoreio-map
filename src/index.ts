@@ -7,10 +7,10 @@ import {
   MeshcoreMapUploader,
   type MapUploaderConfig,
 } from "./map-uploader.js";
-import { SqlitePersistenceStore, type PersistenceStore } from "./persistence-store.js";
+import { TursoPersistenceStore, type PersistenceStore } from "./persistence-store.js";
 import type { MapUploadWorkRequest } from "./map-types.js";
 
-const DEFAULT_SQLITE_PATH = "/data/mqtt-to-meshcoreio-map.sqlite";
+const DEFAULT_TURSO_PATH = "/data/mqtt-to-meshcoreio-map.turso";
 
 export interface RuntimeConfig {
   sourceUrl: string;
@@ -21,7 +21,7 @@ export interface RuntimeConfig {
   reconnectPeriodMs: number;
   connectTimeoutMs: number;
   rejectUnauthorized: boolean;
-  sqlitePath: string;
+  tursoPath: string;
   dashboard: DashboardConfig;
   mapUploader: MapUploaderConfig;
 }
@@ -83,7 +83,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     reconnectPeriodMs: envIntInRange(env.MQTT_RECONNECT_PERIOD_MS, 5000, 250, 300000),
     connectTimeoutMs: envIntInRange(env.MQTT_CONNECT_TIMEOUT_MS, 30000, 1000, 300000),
     rejectUnauthorized: envBool(env.SOURCE_REJECT_UNAUTHORIZED, true),
-    sqlitePath: env.SQLITE_PATH || DEFAULT_SQLITE_PATH,
+    tursoPath: env.TURSO_PATH || env.SQLITE_PATH || DEFAULT_TURSO_PATH,
     dashboard: {
       enabled: envBool(env.ENABLE_DASHBOARD, false),
       port: envIntInRange(env.DASHBOARD_PORT, 80, 1, 65535),
@@ -103,9 +103,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
 
 function openPersistenceStore(path: string): PersistenceStore | undefined {
   try {
-    return new SqlitePersistenceStore(path);
+    const store = new TursoPersistenceStore(path);
+    store.ready.catch((error: Error) => {
+      warn(`Turso persistence failed for ${path}: ${error.message}. Mount a writable volume there, or set TURSO_PATH to another writable database path.`);
+    });
+    return store;
   } catch (error) {
-    warn(`SQLite persistence disabled for ${path}: ${(error as Error).message}. Mount a writable volume there, or set SQLITE_PATH to another writable database path.`);
+    warn(`Turso persistence failed for ${path}: ${(error as Error).message}. Mount a writable volume there, or set TURSO_PATH to another writable database path.`);
     return undefined;
   }
 }
@@ -255,7 +259,7 @@ export function startRuntime(
   dependencies: RuntimeDependencies = {}
 ): Runtime {
   const dashboardConfig = config.dashboard ?? { enabled: false, port: 80 };
-  const meshcoreDashboardStore = dependencies.mapUploader ? undefined : openPersistenceStore(config.sqlitePath);
+  const meshcoreDashboardStore = dependencies.mapUploader ? undefined : openPersistenceStore(config.tursoPath);
   const dashboardState = dashboardConfig.enabled
     ? new DashboardState({ meshcoreHistoryStore: meshcoreDashboardStore })
     : undefined;
@@ -271,13 +275,19 @@ export function startRuntime(
     log("Dashboard demo adverts enabled.");
   }
   if (meshcoreDashboardStore) {
-    log(`SQLite persistence enabled at ${config.sqlitePath}.`);
+    log(`Turso persistence opening at ${config.tursoPath}.`);
   }
   const uploader = dependencies.mapUploader ?? new MeshcoreMapUploader(config.mapUploader, {
     dashboardState,
     observerStatusStore: meshcoreDashboardStore,
   });
-  const ready = Promise.resolve(uploader.ready).then(() => undefined);
+  const ready = Promise.all([
+    dashboardState?.ready,
+    uploader.ready,
+  ]).then(() => undefined);
+  ready.catch((error: Error) => {
+    warn(`Runtime dependencies failed to initialize: ${error.message}.`);
+  });
   const connect = dependencies.connect ?? mqtt.connect;
   const client = connect(config.sourceUrl, buildMqttOptions(config));
   const safeSourceUrl = redactUrlCredentials(config.sourceUrl);
@@ -356,7 +366,8 @@ export function startRuntime(
       if (demoAdverts) {
         clearInterval(demoAdverts);
       }
-      meshcoreDashboardStore?.close?.();
+      await dashboardState?.flushPersistence();
+      await meshcoreDashboardStore?.close?.();
       await dashboard?.close();
       setActiveDashboardState(undefined);
     },
