@@ -80,7 +80,7 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /--warn: #f4c95d/);
       assert.match(body, /--error: #ff6b6b/);
       assert.match(body, /class="dashboard-error" id="dashboard-error" role="status" aria-live="polite"/);
-      assert.match(body, /const POLL_INTERVAL_MS = 10000;/);
+      assert.match(body, /const POLL_INTERVAL_MS = 5000;/);
       assert.match(body, /const DASHBOARD_TIME_ZONE = /);
       assert.match(body, /<div class="panels">[\s\S]*<h2>Queue<\/h2>[\s\S]*<h2>Workers<\/h2>[\s\S]*<h2>History<\/h2>[\s\S]*<\/div>[\s\S]*<section class="map-section"/);
       assert.doesNotMatch(body, /#history-list \{ max-height:/);

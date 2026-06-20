@@ -9,7 +9,7 @@ import type {
   DashboardWorkerSnapshot,
 } from "./dashboard-state.js";
 
-const DASHBOARD_POLL_INTERVAL_MS = 10000;
+const DASHBOARD_POLL_INTERVAL_MS = 5000;
 const DASHBOARD_ASSETS_DIR = fileURLToPath(new URL("./assets/node_types/", import.meta.url));
 const NODE_TYPE_COLOR_PLACEHOLDER = "__NODE_TYPE_FILL__";
 
@@ -126,8 +126,8 @@ const DASHBOARD_HTML = `<!doctype html>
     }
     .stats {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
+      grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.9fr) minmax(280px, 0.9fr);
+      gap: 16px;
       grid-column: 1 / -1;
     }
     .stat {
