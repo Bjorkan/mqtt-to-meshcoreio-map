@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import {
   createMapUploadSigningIdentity,
   MeshcoreMapUploader,
-  SqliteObserverStatusStore,
+  SqlitePersistenceStore,
 } from '../../dist/map-uploader.js';
 import { DashboardState } from '../../dist/dashboard/dashboard-state.js';
 import {
@@ -357,10 +357,10 @@ test('drops observer radio status after one hour without a new valid status', as
 
 test('loads persisted observer radio status from SQLite after restart', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'mqtt-to-map-observers-'));
-  const dbPath = join(directory, 'observer-status.sqlite');
+  const dbPath = join(directory, 'mqtt-to-meshcoreio-map.sqlite');
 
   try {
-    const firstStore = new SqliteObserverStatusStore(dbPath);
+    const firstStore = new SqlitePersistenceStore(dbPath);
     const firstUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
       fetch: makeFetch().fetch,
       observerStatusStore: firstStore,
@@ -370,7 +370,7 @@ test('loads persisted observer radio status from SQLite after restart', async ()
     firstStore.close();
 
     const { fetch, requests } = makeFetch();
-    const secondStore = new SqliteObserverStatusStore(dbPath);
+    const secondStore = new SqlitePersistenceStore(dbPath);
     const secondUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
       fetch,
       observerStatusStore: secondStore,
@@ -397,10 +397,10 @@ test('loads persisted observer radio status from SQLite after restart', async ()
 
 test('removes persisted observer radio status older than one hour', () => {
   const directory = mkdtempSync(join(tmpdir(), 'mqtt-to-map-observers-'));
-  const dbPath = join(directory, 'observer-status.sqlite');
+  const dbPath = join(directory, 'mqtt-to-meshcoreio-map.sqlite');
 
   try {
-    const firstStore = new SqliteObserverStatusStore(dbPath);
+    const firstStore = new SqlitePersistenceStore(dbPath);
     firstStore.upsert({
       origin: 'SE-STO-OBSERVER',
       originId: OBSERVER_ID,
@@ -409,7 +409,7 @@ test('removes persisted observer radio status older than one hour', () => {
     });
     firstStore.close();
 
-    const secondStore = new SqliteObserverStatusStore(dbPath);
+    const secondStore = new SqlitePersistenceStore(dbPath);
     new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
       fetch: makeFetch().fetch,
       observerStatusStore: secondStore,

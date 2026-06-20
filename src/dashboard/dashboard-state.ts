@@ -1,5 +1,5 @@
 import type { MapUploadWorkRequest, RadioParams } from "../map-types.js";
-import type { MeshcoreHistoryStore } from "../observer-status-store.js";
+import type { MeshcoreHistoryStore } from "../persistence-store.js";
 
 const MAX_LOGS = 500;
 const MAX_QUEUE_HISTORY = 200;

@@ -23,7 +23,7 @@ export interface MeshcoreHistoryStore {
   deleteMeshcoreHistoryOlderThan(updatedAt: number): void;
 }
 
-export type MeshcoreDashboardStore = ObserverStatusStore & MeshcoreHistoryStore;
+export type PersistenceStore = ObserverStatusStore & MeshcoreHistoryStore;
 
 interface ObserverStatusRow {
   origin_id: string;
@@ -40,7 +40,7 @@ interface MeshcoreHistoryRow {
   advert_json: string | null;
 }
 
-export class SqliteObserverStatusStore implements MeshcoreDashboardStore {
+export class SqlitePersistenceStore implements PersistenceStore {
   private readonly db: DatabaseSync;
 
   constructor(path: string) {

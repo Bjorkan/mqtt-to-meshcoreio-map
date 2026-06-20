@@ -7,10 +7,10 @@ import {
   MeshcoreMapUploader,
   type MapUploaderConfig,
 } from "./map-uploader.js";
-import { SqliteObserverStatusStore, type MeshcoreDashboardStore } from "./observer-status-store.js";
+import { SqlitePersistenceStore, type PersistenceStore } from "./persistence-store.js";
 import type { MapUploadWorkRequest } from "./map-types.js";
 
-const OBSERVER_STATUS_SQLITE_PATH = "/data/observer-status.sqlite";
+const DEFAULT_SQLITE_PATH = "/data/mqtt-to-meshcoreio-map.sqlite";
 
 export interface RuntimeConfig {
   sourceUrl: string;
@@ -21,6 +21,7 @@ export interface RuntimeConfig {
   reconnectPeriodMs: number;
   connectTimeoutMs: number;
   rejectUnauthorized: boolean;
+  sqlitePath: string;
   dashboard: DashboardConfig;
   mapUploader: MapUploaderConfig;
 }
@@ -82,6 +83,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     reconnectPeriodMs: envIntInRange(env.MQTT_RECONNECT_PERIOD_MS, 5000, 250, 300000),
     connectTimeoutMs: envIntInRange(env.MQTT_CONNECT_TIMEOUT_MS, 30000, 1000, 300000),
     rejectUnauthorized: envBool(env.SOURCE_REJECT_UNAUTHORIZED, true),
+    sqlitePath: env.SQLITE_PATH || DEFAULT_SQLITE_PATH,
     dashboard: {
       enabled: envBool(env.ENABLE_DASHBOARD, false),
       port: envIntInRange(env.DASHBOARD_PORT, 80, 1, 65535),
@@ -99,11 +101,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   };
 }
 
-function openMeshcoreDashboardStore(): MeshcoreDashboardStore | undefined {
+function openPersistenceStore(path: string): PersistenceStore | undefined {
   try {
-    return new SqliteObserverStatusStore(OBSERVER_STATUS_SQLITE_PATH);
+    return new SqlitePersistenceStore(path);
   } catch (error) {
-    warn(`SQLite persistence disabled: ${(error as Error).message}`);
+    warn(`SQLite persistence disabled for ${path}: ${(error as Error).message}. Mount a writable volume there, or set SQLITE_PATH to another writable database path.`);
     return undefined;
   }
 }
@@ -253,7 +255,7 @@ export function startRuntime(
   dependencies: RuntimeDependencies = {}
 ): Runtime {
   const dashboardConfig = config.dashboard ?? { enabled: false, port: 80 };
-  const meshcoreDashboardStore = dependencies.mapUploader ? undefined : openMeshcoreDashboardStore();
+  const meshcoreDashboardStore = dependencies.mapUploader ? undefined : openPersistenceStore(config.sqlitePath);
   const dashboardState = dashboardConfig.enabled
     ? new DashboardState({ meshcoreHistoryStore: meshcoreDashboardStore })
     : undefined;
@@ -269,7 +271,7 @@ export function startRuntime(
     log("Dashboard demo adverts enabled.");
   }
   if (meshcoreDashboardStore) {
-    log(`SQLite persistence enabled at ${OBSERVER_STATUS_SQLITE_PATH}.`);
+    log(`SQLite persistence enabled at ${config.sqlitePath}.`);
   }
   const uploader = dependencies.mapUploader ?? new MeshcoreMapUploader(config.mapUploader, {
     dashboardState,

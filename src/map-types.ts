@@ -1,5 +1,5 @@
 import type { DashboardState } from "./dashboard/dashboard-state.js";
-import type { ObserverStatusStore } from "./observer-status-store.js";
+import type { ObserverStatusStore } from "./persistence-store.js";
 
 export interface MapUploaderConfig {
   enabled: boolean;

@@ -59,7 +59,7 @@ Frequency may arrive as MHz, kHz, or Hz. Bandwidth may arrive as kHz or Hz. The 
 
 Set `TZ` to an IANA time zone such as `Europe/Stockholm` to format service log timestamps and dashboard-rendered timestamps in that time zone.
 
-Only the latest valid status for each observer is kept. Invalid, offline, or incomplete status messages do not overwrite the latest valid radio parameters. Observer status older than one hour is dropped. In Docker, valid observer statuses are also stored in SQLite at `/data/observer-status.sqlite` and loaded again after restart.
+Only the latest valid status for each observer is kept. Invalid, offline, or incomplete status messages do not overwrite the latest valid radio parameters. Observer status older than one hour is dropped. Valid observer statuses are also stored in SQLite at `SQLITE_PATH`, which defaults to `/data/mqtt-to-meshcoreio-map.sqlite`, and loaded again after restart.
 
 Dashboard history for adverts that received a MeshCore.io server response is also stored in the same SQLite database. The stored response can be any MeshCore.io response body, such as `NODES_INSERTED`, `ERR_ADVERT_DUPLICATE`, or `ERR_COORDS_MISSING`; entries without a MeshCore.io response are not persisted. Stored dashboard history older than 24 hours is removed. The dashboard history list exposes the newest 100 entries, while the map exposes every stored 24-hour `NODES_INSERTED` advert that has coordinates.
 
@@ -177,6 +177,6 @@ The runtime is divided into three responsibilities:
 15. Retry failed upload attempts by reducing `retriesAllowed` and placing the advert at the back of the global queue until no retries remain.
 16. Wait 5 seconds after each upload job before that worker takes the next queued request.
 
-Deduplication, replay protection, queued uploads, in-flight uploads, and retry state are kept in memory. Observer radio state is kept in memory and persisted in SQLite at `/data/observer-status.sqlite` when that path is writable; rows older than one hour are removed. Dashboard history for adverts that received a MeshCore.io response is persisted in the same SQLite database for 24 hours. A service restart starts with an empty local deduplication cache; MeshCore.io may still apply its own duplicate handling.
+Deduplication, replay protection, queued uploads, in-flight uploads, and retry state are kept in memory. Observer radio state is kept in memory and persisted in SQLite at `SQLITE_PATH` when that path is writable; rows older than one hour are removed. Dashboard history for adverts that received a MeshCore.io response is persisted in the same SQLite database for 24 hours. A service restart starts with an empty local deduplication cache; MeshCore.io may still apply its own duplicate handling.
 
 If the same advert is heard by multiple observers, the bridge uploads the first accepted copy for that advertised node/timestamp. Later copies with different observer radio data may be skipped by duplicate and reupload protection.

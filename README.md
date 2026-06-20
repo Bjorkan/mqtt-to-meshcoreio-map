@@ -48,6 +48,7 @@ Important runtime settings:
 - `MESHCOREIO_REQUEST_TIMEOUT_MS`: HTTP timeout for MeshCore.io requests. Default: `10000`.
 - `MESHCOREIO_MIN_REUPLOAD_SECONDS`: minimum accepted advert timestamp gap per advertised node. Default: `3600`.
 - `TZ`: time zone used for service log timestamps and dashboard-rendered timestamps, for example `Europe/Stockholm`.
+- `SQLITE_PATH`: SQLite database path for observer radio status and dashboard MeshCore.io response history. Default: `/data/mqtt-to-meshcoreio-map.sqlite`.
 - `ENABLE_DASHBOARD`: enable the read-only dashboard. Default: `false`.
 - `DASHBOARD_PORT`: internal dashboard listen port. Default: `80`.
 
@@ -55,7 +56,7 @@ Each worker creates its own ephemeral MeshCore.io signing identity at startup. I
 
 Numeric environment variables are range-checked. Invalid, negative, zero-where-not-allowed, or unreasonably large values fall back to safe defaults.
 
-In Docker, observer radio statuses and dashboard MeshCore.io response history are stored in SQLite at `/data/observer-status.sqlite`. Change the Compose volume mapping if you want to choose where that database lives on the host.
+In Docker, observer radio statuses and dashboard MeshCore.io response history are stored in SQLite at `/data/mqtt-to-meshcoreio-map.sqlite`. Keep `/data` mounted as a writable volume when `read_only: true` is enabled, or set `SQLITE_PATH` to another writable database path.
 
 ## Dashboard
 

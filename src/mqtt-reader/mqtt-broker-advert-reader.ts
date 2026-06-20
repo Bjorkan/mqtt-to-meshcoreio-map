@@ -22,7 +22,7 @@ import {
 import { formatMapUploadLogLine, logMapUpload, warnMapUpload } from "../map-log.js";
 import type { AdvertLogContext, MapUploaderConfig, MapUploaderDependencies, ObserverState } from "../map-types.js";
 import type { DashboardState } from "../dashboard/dashboard-state.js";
-import type { ObserverStatusStore } from "../observer-status-store.js";
+import type { ObserverStatusStore } from "../persistence-store.js";
 
 export class MqttBrokerAdvertReader {
   private readonly now: () => number;

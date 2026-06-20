@@ -49,6 +49,7 @@ function makeConfig(overrides = {}) {
     reconnectPeriodMs: 10,
     connectTimeoutMs: 100,
     rejectUnauthorized: true,
+    sqlitePath: ":memory:",
     mapUploader: {
       enabled: true,
       apiUrl: "https://map.meshcore.io/api/v1/uploader/node",
@@ -68,6 +69,7 @@ test("loads runtime configuration from environment with production defaults", ()
   assert.equal(defaults.sourceUrl, "mqtt://localhost:1883");
   assert.equal(defaults.sourceClientId, "mqtt-to-meshcoreio-map");
   assert.equal(defaults.topicFilter, "meshcore/#");
+  assert.equal(defaults.sqlitePath, "/data/mqtt-to-meshcoreio-map.sqlite");
   assert.equal(defaults.mapUploader.enabled, true);
   assert.equal(defaults.mapUploader.apiUrl, "https://map.meshcore.io/api/v1/uploader/node");
 
@@ -78,6 +80,7 @@ test("loads runtime configuration from environment with production defaults", ()
     SOURCE_CLIENT_ID: "map-uploader",
     TOPIC_FILTER: "custom/#",
     SOURCE_REJECT_UNAUTHORIZED: "false",
+    SQLITE_PATH: "/tmp/map.sqlite",
     MESHCOREIO_API_URL: "https://map.example/api",
     MESHCOREIO_DRY_RUN: "true",
     MESHCOREIO_WORKERS: "4",
@@ -91,6 +94,7 @@ test("loads runtime configuration from environment with production defaults", ()
   assert.equal(configured.sourceClientId, "map-uploader");
   assert.equal(configured.topicFilter, "custom/#");
   assert.equal(configured.rejectUnauthorized, false);
+  assert.equal(configured.sqlitePath, "/tmp/map.sqlite");
   assert.equal(configured.mapUploader.apiUrl, "https://map.example/api");
   assert.equal(configured.mapUploader.dryRun, true);
   assert.equal(configured.mapUploader.maxConcurrentUploads, 4);
