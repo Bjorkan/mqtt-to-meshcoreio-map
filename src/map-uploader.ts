@@ -6,6 +6,7 @@ import type { MapUploaderConfig, MapUploaderDependencies } from "./map-types.js"
 export * from "./queue/advert-posting-queue.js";
 export * from "./map-log.js";
 export * from "./map-types.js";
+export * from "./observer-status-store.js";
 export * from "./meshcoreio-poster/meshcoreio-poster.js";
 export * from "./mqtt-reader/mqtt-broker-advert-reader.js";
 

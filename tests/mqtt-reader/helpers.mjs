@@ -54,6 +54,13 @@ export function makeFetch({ ok = true, status = 200, text = '{"ok":true}' } = {}
   return { fetch, requests };
 }
 
+export function makeUploaderDependencies(overrides = {}) {
+  return {
+    workerDelay: async () => {},
+    ...overrides,
+  };
+}
+
 export function makeAdvertPacket({
   seed = ADVERT_SEED,
   timestamp = 1_800_000_000,

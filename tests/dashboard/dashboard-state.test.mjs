@@ -50,6 +50,29 @@ function recordLocation(state, job, overrides = {}) {
   });
 }
 
+class FakeMeshcoreHistoryStore {
+  records = [];
+  deletedOlderThan = [];
+
+  loadMeshcoreHistory() {
+    return this.records;
+  }
+
+  upsertMeshcoreHistory(record) {
+    const index = this.records.findIndex((item) => item.queueItem.job.requestId === record.queueItem.job.requestId);
+    if (index === -1) {
+      this.records.unshift(record);
+    } else {
+      this.records[index] = record;
+    }
+  }
+
+  deleteMeshcoreHistoryOlderThan(updatedAt) {
+    this.deletedOlderThan.push(updatedAt);
+    this.records = this.records.filter((record) => Date.parse(record.queueItem.updatedAt) >= updatedAt);
+  }
+}
+
 test("queueHandled leaves advert visible as accepted while archiving queue item", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
@@ -65,10 +88,46 @@ test("queueHandled leaves advert visible as accepted while archiving queue item"
   assert.equal(snapshot.queueHistory[0].state, "handled");
   assert.equal(snapshot.queueHistory[0].responseFromMeshcoreIO, '{"code":"NODES_INSERTED"}');
 
-  assert.equal(snapshot.advertsLastHour.length, 1);
-  assert.equal(snapshot.advertsLastHour[0].requestId, job.requestId);
-  assert.equal(snapshot.advertsLastHour[0].status, "accepted");
-  assert.equal(snapshot.advertsLastHour[0].responseFromMeshcoreIO, '{"code":"NODES_INSERTED"}');
+  assert.equal(snapshot.advertsLast24Hours.length, 1);
+  assert.equal(snapshot.advertsLast24Hours[0].requestId, job.requestId);
+  assert.equal(snapshot.advertsLast24Hours[0].status, "accepted");
+  assert.equal(snapshot.advertsLast24Hours[0].responseFromMeshcoreIO, '{"code":"NODES_INSERTED"}');
+});
+
+test("queueHandled persists MeshCore.io history with any server response and reloads it after restart", () => {
+  const clock = makeClock();
+  const store = new FakeMeshcoreHistoryStore();
+  const firstState = new DashboardState({ now: clock.now, meshcoreHistoryStore: store });
+  const job = makeJob();
+
+  recordLocation(firstState, job);
+  firstState.queueAdded(job, 1);
+  firstState.queueHandled(job, '{"code":"ERR_ADVERT_DUPLICATE"}');
+
+  assert.equal(store.records.length, 1);
+
+  const secondState = new DashboardState({ now: clock.now, meshcoreHistoryStore: store });
+  const snapshot = secondState.snapshot();
+
+  assert.equal(snapshot.queueHistory.length, 1);
+  assert.equal(snapshot.queueHistory[0].job.requestId, job.requestId);
+  assert.equal(snapshot.queueHistory[0].responseFromMeshcoreIO, '{"code":"ERR_ADVERT_DUPLICATE"}');
+  assert.equal(snapshot.advertsLast24Hours.length, 1);
+  assert.equal(snapshot.advertsLast24Hours[0].requestId, job.requestId);
+  assert.equal(snapshot.advertsLast24Hours[0].responseFromMeshcoreIO, '{"code":"ERR_ADVERT_DUPLICATE"}');
+});
+
+test("queueHandled does not persist MeshCore.io history until a server response exists", () => {
+  const clock = makeClock();
+  const store = new FakeMeshcoreHistoryStore();
+  const state = new DashboardState({ now: clock.now, meshcoreHistoryStore: store });
+  const job = makeJob();
+
+  recordLocation(state, job);
+  state.queueAdded(job, 1);
+  state.queueHandled(job);
+
+  assert.equal(store.records.length, 0);
 });
 
 test("queueDropped leaves advert visible as rejected while archiving queue item", () => {
@@ -86,13 +145,13 @@ test("queueDropped leaves advert visible as rejected while archiving queue item"
   assert.equal(snapshot.queueHistory[0].state, "dropped");
   assert.equal(snapshot.queueHistory[0].detail, "Upload queue is full.");
 
-  assert.equal(snapshot.advertsLastHour.length, 1);
-  assert.equal(snapshot.advertsLastHour[0].requestId, job.requestId);
-  assert.equal(snapshot.advertsLastHour[0].status, "rejected");
-  assert.equal(snapshot.advertsLastHour[0].statusDetail, "Upload queue is full.");
+  assert.equal(snapshot.advertsLast24Hours.length, 1);
+  assert.equal(snapshot.advertsLast24Hours[0].requestId, job.requestId);
+  assert.equal(snapshot.advertsLast24Hours[0].status, "rejected");
+  assert.equal(snapshot.advertsLast24Hours[0].statusDetail, "Upload queue is full.");
 });
 
-test("snapshot prefers a newer rejected advert over an older accepted advert for the same node", () => {
+test("snapshot keeps accepted and rejected adverts for the same node inside the 24-hour window", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
   const nodePublicKey = "b".repeat(64);
@@ -108,12 +167,14 @@ test("snapshot prefers a newer rejected advert over an older accepted advert for
 
   const snapshot = state.snapshot();
 
-  assert.equal(snapshot.advertsLastHour.length, 1);
-  assert.equal(snapshot.advertsLastHour[0].requestId, rejected.requestId);
-  assert.equal(snapshot.advertsLastHour[0].status, "rejected");
+  assert.equal(snapshot.advertsLast24Hours.length, 2);
+  assert.deepEqual(
+    snapshot.advertsLast24Hours.map((advert) => [advert.requestId, advert.status]),
+    [["older-accepted", "accepted"], ["newer-rejected", "rejected"]]
+  );
 });
 
-test("snapshot prefers a newer pending advert over an older accepted advert for the same node", () => {
+test("snapshot keeps accepted and pending adverts for the same node inside the 24-hour window", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
   const nodePublicKey = "c".repeat(64);
@@ -128,18 +189,18 @@ test("snapshot prefers a newer pending advert over an older accepted advert for 
 
   const snapshot = state.snapshot();
 
-  assert.equal(snapshot.advertsLastHour.length, 1);
-  assert.equal(snapshot.advertsLastHour[0].requestId, pending.requestId);
-  assert.equal(snapshot.advertsLastHour[0].status, "pending");
+  assert.equal(snapshot.advertsLast24Hours.length, 2);
+  assert.deepEqual(
+    snapshot.advertsLast24Hours.map((advert) => [advert.requestId, advert.status]),
+    [["older-accepted", "accepted"], ["newer-pending", "pending"]]
+  );
 });
 
-test("snapshot uses requestId as a deterministic tie-breaker when timestamps and status are equal", () => {
+test("snapshot keeps same-time adverts for the same node", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
   const nodePublicKey = "d".repeat(64);
 
-  // Both adverts are recorded at exactly the same time with the same status.
-  // "request-z" is lexicographically greater than "request-a", so it should win.
   const loser = makeJob({ requestId: "request-a-loser", nodePublicKey });
   recordLocation(state, loser);
 
@@ -148,20 +209,23 @@ test("snapshot uses requestId as a deterministic tie-breaker when timestamps and
 
   const snapshot = state.snapshot();
 
-  assert.equal(snapshot.advertsLastHour.length, 1);
-  assert.equal(snapshot.advertsLastHour[0].requestId, winner.requestId);
+  assert.equal(snapshot.advertsLast24Hours.length, 2);
+  assert.deepEqual(
+    snapshot.advertsLast24Hours.map((advert) => advert.requestId),
+    ["request-a-loser", "request-z-winner"]
+  );
 });
 
-test("advert locations expire after the last-hour window", () => {
+test("advert locations expire after the 24-hour window", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
   const job = makeJob();
 
   recordLocation(state, job);
-  assert.equal(state.snapshot().advertsLastHour.length, 1);
+  assert.equal(state.snapshot().advertsLast24Hours.length, 1);
 
-  clock.advance(60 * 60 * 1000 + 1);
-  assert.equal(state.snapshot().advertsLastHour.length, 0);
+  clock.advance(24 * 60 * 60 * 1000 + 1);
+  assert.equal(state.snapshot().advertsLast24Hours.length, 0);
 });
 
 test("dashboard logs are capped at the newest 500 entries", () => {

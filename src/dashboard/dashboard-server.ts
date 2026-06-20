@@ -4,16 +4,28 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   DashboardAdvertLocation,
-  DashboardLogEntry,
   DashboardQueueItem,
   DashboardState,
   DashboardWorkerSnapshot,
 } from "./dashboard-state.js";
 
-const MAX_API_EVENTS = 100;
-const DASHBOARD_POLL_INTERVAL_MS = 2000;
+const DASHBOARD_POLL_INTERVAL_MS = 10000;
 const DASHBOARD_ASSETS_DIR = fileURLToPath(new URL("./assets/node_types/", import.meta.url));
 const NODE_TYPE_COLOR_PLACEHOLDER = "__NODE_TYPE_FILL__";
+
+function configuredTimeZone(): string | undefined {
+  const timeZone = process.env.TZ?.trim();
+  if (!timeZone) {
+    return undefined;
+  }
+
+  try {
+    new Intl.DateTimeFormat("sv-SE", { timeZone }).format(new Date(0));
+    return timeZone;
+  } catch {
+    return undefined;
+  }
+}
 
 function readNodeTypeSvgTemplate(nodeType: 1 | 2 | 3): string {
   const template = readFileSync(path.join(DASHBOARD_ASSETS_DIR, `${nodeType}.svg`), "utf8").trim();
@@ -147,13 +159,6 @@ const DASHBOARD_HTML = `<!doctype html>
       height: calc(100dvh - 96px);
       max-height: none;
     }
-    .map-tools {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
     .map {
       width: 100%;
       height: min(560px, 58vh);
@@ -175,10 +180,17 @@ const DASHBOARD_HTML = `<!doctype html>
     }
     .leaflet-control-attribution a { color: var(--accent); }
     .meshcore-node-icon, .meshcore-cluster-icon { background: none; border: 0; }
-    .meshcore-node-icon svg { width: 32px; height: 32px; display: block; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.45)); }
+    .meshcore-node-icon svg {
+      width: 32px;
+      height: 32px;
+      display: block;
+      filter: saturate(5) hue-rotate(260deg) drop-shadow(0 1px 3px rgba(0,0,0,0.45));
+    }
     .meshcore-cluster-icon {
       background-clip: padding-box;
       border-radius: 20px;
+      background-color: rgba(102, 123, 137, 0.42);
+      filter: saturate(5) hue-rotate(260deg);
     }
     .meshcore-cluster-icon div {
       width: 30px;
@@ -188,46 +200,10 @@ const DASHBOARD_HTML = `<!doctype html>
       border-radius: 15px;
       display: grid;
       place-items: center;
-      background-color: var(--cluster-color);
+      background-color: #667b89;
       color: #091015;
       font: 800 12px "Helvetica Neue", Arial, Helvetica, sans-serif;
     }
-    .meshcore-cluster-icon.accepted {
-      --cluster-color: var(--ok);
-      background-color: rgba(97, 211, 148, 0.48);
-    }
-    .meshcore-cluster-icon.pending {
-      --cluster-color: var(--warn);
-      background-color: rgba(244, 201, 93, 0.48);
-    }
-    .meshcore-cluster-icon.rejected {
-      --cluster-color: var(--error);
-      background-color: rgba(255, 107, 107, 0.48);
-    }
-    .legend {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-      margin-bottom: 10px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .legend span {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .legend span::before {
-      content: "";
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      background: var(--accent);
-      display: inline-block;
-    }
-    .legend .rejected::before { background: var(--error); }
-    .legend .pending::before { background: var(--warn); }
-    .legend .accepted::before { background: var(--ok); }
     .list {
       display: grid;
       gap: 8px;
@@ -277,33 +253,6 @@ const DASHBOARD_HTML = `<!doctype html>
     .pill.ok { color: var(--ok); border-color: rgba(97, 211, 148, 0.5); }
     .pill.warn { color: var(--warn); border-color: rgba(244, 201, 93, 0.5); }
     .pill.error { color: var(--error); border-color: rgba(255, 107, 107, 0.5); }
-    .status-badge {
-      border-radius: 999px;
-      border: 1px solid rgba(255, 107, 107, 0.55);
-      color: var(--error);
-      padding: 2px 9px;
-      font-size: 12px;
-      white-space: nowrap;
-    }
-    .status-badge.connected {
-      border-color: rgba(97, 211, 148, 0.55);
-      color: var(--ok);
-    }
-    .logs {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 12px;
-      line-height: 1.45;
-      flex: 1;
-      min-height: 0;
-      overflow: auto;
-    }
-    .log {
-      border-bottom: 1px solid rgba(44, 58, 69, 0.7);
-      padding: 7px 0;
-      overflow-wrap: anywhere;
-    }
-    .log.warn { color: var(--warn); }
-    .log.error { color: var(--error); }
     dialog {
       width: min(880px, calc(100vw - 32px));
       max-height: calc(100vh - 32px);
@@ -357,7 +306,6 @@ const DASHBOARD_HTML = `<!doctype html>
       section { padding: 12px; }
       .dashboard-error { margin: 0 12px 12px; }
       .stats { grid-template-columns: 1fr; }
-      .map-tools { align-items: flex-start; }
       .map {
         height: min(420px, 52vh);
         min-height: 280px;
@@ -375,16 +323,9 @@ const DASHBOARD_HTML = `<!doctype html>
     <div class="stats">
       <div class="stat"><strong id="stat-queue">0</strong><span>Queued to be pushed to Meshcore.io</span></div>
       <div class="stat"><strong id="stat-workers">0</strong><span>workers</span></div>
-      <div class="stat"><strong id="stat-adverts">0</strong><span>adverts with coordinates, last hour</span></div>
+      <div class="stat"><strong id="stat-adverts">0</strong><span>accepted adverts with coordinates, last 24h</span></div>
     </div>
     <div class="panels">
-      <section>
-        <div class="section-head">
-          <h2>Events</h2>
-          <span class="status-badge" id="mqtt-status">disconnected</span>
-        </div>
-        <div class="logs" id="logs"></div>
-      </section>
       <section>
         <h2>Queue</h2>
         <div class="list" id="queue"></div>
@@ -396,17 +337,10 @@ const DASHBOARD_HTML = `<!doctype html>
     </div>
     <section class="map-section" id="map-section">
       <div class="section-head">
-        <h2>Advert Flow Map</h2>
+        <h2>Advert accepted by Meshcore.io</h2>
         <button class="icon-button" id="map-fullscreen" type="button" title="Fullscreen map">Fullscreen</button>
       </div>
-      <div class="map-tools">
-        <div class="legend">
-          <span class="pending">pending Meshcore.io response</span>
-          <span class="accepted">accepted by Meshcore.io</span>
-          <span class="rejected">rejected without Meshcore.io handling</span>
-        </div>
-      </div>
-      <div class="map" id="map" aria-label="Advert flow locations from the last hour"></div>
+      <div class="map" id="map" aria-label="Accepted advert locations from the last 24 hours"></div>
     </section>
     <section>
       <div class="section-head">
@@ -428,6 +362,7 @@ const DASHBOARD_HTML = `<!doctype html>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script>
     const POLL_INTERVAL_MS = ${DASHBOARD_POLL_INTERVAL_MS};
+    const DASHBOARD_TIME_ZONE = ${JSON.stringify(configuredTimeZone())};
     const state = { dashboard: null, mapFirstRender: true, renderKeys: new Map(), pollTimer: null };
     const dialog = document.getElementById("detail-dialog");
     const detailTitle = document.getElementById("detail-title");
@@ -517,7 +452,12 @@ const DASHBOARD_HTML = `<!doctype html>
 
     function formatTime(value) {
       const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString();
+      return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], {
+        timeZone: DASHBOARD_TIME_ZONE,
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
     }
 
     function pillClass(value) {
@@ -543,7 +483,7 @@ const DASHBOARD_HTML = `<!doctype html>
           if (item.job?.requestKey === requestId) return item;
         }
       }
-      for (const advert of state.dashboard.map.advertsLastHour || []) {
+      for (const advert of state.dashboard.map.advertsLast24Hours || []) {
         if (advert.requestKey === requestId) return advert;
       }
       return null;
@@ -552,30 +492,15 @@ const DASHBOARD_HTML = `<!doctype html>
     function renderStats(snapshot) {
       setTextIfChanged("stat-queue", String((snapshot.queue.items || []).length));
       setTextIfChanged("stat-workers", String((snapshot.worker.workers || []).length));
-      setTextIfChanged("stat-adverts", String((snapshot.map.advertsLastHour || []).length));
+      setTextIfChanged("stat-adverts", String((snapshot.map.advertsLast24Hours || []).length));
       setTextIfChanged("updated", "Updated " + formatTime(snapshot.generatedAt));
     }
-
-    function renderMqttStatus(status) {
-      const badge = document.getElementById("mqtt-status");
-      const state = status?.state || "disconnected";
-      if (badge.textContent !== state) badge.textContent = state;
-      badge.title = "";
-      badge.className = "status-badge " + (state === "connected" ? "connected" : "");
-    }
-
-    const STATUS_COLORS = { accepted: 'var(--ok)', pending: 'var(--warn)', rejected: 'var(--error)' };
 
     // SVG icons are loaded from vendored files in this repository, adapted from meshcore-dev/map.meshcore.io (MIT licence).
     const NODE_TYPE_SVG_TEMPLATES = ${JSON.stringify(NODE_TYPE_SVG_TEMPLATES)};
 
-    function tintNodeTypeSvg(template, color) {
-      return String(template || "").replace(${JSON.stringify(NODE_TYPE_COLOR_PLACEHOLDER)}, color);
-    }
-
-    function markerStatus(status) {
-      if (status === "rejected" || status === "accepted") return status;
-      return "pending";
+    function nodeTypeSvg(template) {
+      return String(template || "").replace(${JSON.stringify(NODE_TYPE_COLOR_PLACEHOLDER)}, "#667b89");
     }
 
     function advertNodeType(advertType) {
@@ -587,15 +512,13 @@ const DASHBOARD_HTML = `<!doctype html>
 
     function markerIcon(advert) {
       const nodeType = advertNodeType(advert.advertType);
-      const status = markerStatus(advert.status);
-      const cacheKey = nodeType + "|" + status;
+      const cacheKey = String(nodeType);
       const cached = markerIconCache.get(cacheKey);
       if (cached) return cached;
-      const color = STATUS_COLORS[status] || STATUS_COLORS.pending;
       const svgTemplate = NODE_TYPE_SVG_TEMPLATES[nodeType] || NODE_TYPE_SVG_TEMPLATES[1];
       const icon = L.divIcon({
-        html: tintNodeTypeSvg(svgTemplate, color),
-        className: "meshcore-node-icon meshcore-node-type-" + nodeType + " " + status,
+        html: nodeTypeSvg(svgTemplate),
+        className: "meshcore-node-icon meshcore-node-type-" + nodeType,
         iconSize: [32, 32],
         iconAnchor: [17, 17],
         popupAnchor: [0, -16],
@@ -604,19 +527,11 @@ const DASHBOARD_HTML = `<!doctype html>
       return icon;
     }
 
-    function clusterStatus(cluster) {
-      const statuses = cluster.getAllChildMarkers().map((marker) => marker.options.dashboardStatus);
-      if (statuses.includes("rejected")) return "rejected";
-      if (statuses.includes("pending")) return "pending";
-      return "accepted";
-    }
-
     function clusterIcon(cluster) {
       const count = cluster.getChildCount();
-      const status = clusterStatus(cluster);
       return L.divIcon({
         html: "<div><span>" + count + "</span></div>",
-        className: "meshcore-cluster-icon " + status,
+        className: "meshcore-cluster-icon",
         iconSize: L.point(40, 40),
       });
     }
@@ -662,7 +577,6 @@ const DASHBOARD_HTML = `<!doctype html>
     function markerFingerprint(advert) {
       return fingerprint({
         requestKey: advert.requestKey,
-        status: markerStatus(advert.status),
         statusDetail: advert.statusDetail,
         advertType: advert.advertType,
         nodeName: advert.nodeName,
@@ -684,7 +598,6 @@ const DASHBOARD_HTML = `<!doctype html>
 
     function updateMarker(marker, advert) {
       marker.options.dashboardAdvert = advert;
-      marker.options.dashboardStatus = markerStatus(advert.status);
       marker.setLatLng([advert.lat, advert.lon]);
       marker.setIcon(markerIcon(advert));
       marker.options.title = advert.nodeName || advert.nodeKey || "unknown";
@@ -699,7 +612,6 @@ const DASHBOARD_HTML = `<!doctype html>
       const marker = L.marker([advert.lat, advert.lon], {
         icon: markerIcon(advert),
         title: advert.nodeName || advert.nodeKey || "unknown",
-        dashboardStatus: markerStatus(advert.status),
         dashboardAdvert: advert,
         interactive: true,
       });
@@ -757,15 +669,6 @@ const DASHBOARD_HTML = `<!doctype html>
         leafletMap.setView([54, 12], 4);
       }
       setTimeout(() => leafletMap.invalidateSize(), 0);
-    }
-
-    function renderLogs(logs) {
-      const target = document.getElementById("logs");
-      const entries = (logs || []).slice(0, 100);
-      const signature = entries.map((log) => [log.at, log.level, log.source, log.message].join("|")).join("\\n");
-      renderWhenChanged("logs", entries, target, () => {
-        target.innerHTML = entries.map((log) => '<div class="log ' + escapeText(log.level) + '"><span class="muted">' + formatTime(log.at) + ' ' + escapeText(log.source) + '</span> ' + escapeText(log.message) + '</div>').join("") || '<div class="muted">No dashboard events yet.</div>';
-      }, signature);
     }
 
     function renderWorkers(workers) {
@@ -867,11 +770,9 @@ const DASHBOARD_HTML = `<!doctype html>
       state.dashboard = snapshot;
       clearRefreshError();
       renderStats(snapshot);
-      renderMqttStatus(snapshot.reader.mqttSource);
-      const adverts = snapshot.map.advertsLastHour || [];
+      const adverts = snapshot.map.advertsLast24Hours || [];
       const mapSignature = adverts.map((advert) => markerKey(advert) + "|" + markerFingerprint(advert)).join("\\n");
       renderWhenChanged("map", adverts, document.getElementById("map"), () => renderMap(adverts), mapSignature);
-      renderLogs(snapshot.reader.events || []);
       renderWorkers(snapshot.worker.workers || []);
       renderQueue(snapshot.queue.items || []);
       renderHistory(snapshot.queue.history || []);
@@ -920,12 +821,6 @@ function shortRequestKey(value: string | undefined): string {
   return value ? value.slice(0, 8) : "no request";
 }
 
-function sanitizeEventMessage(value: string): string {
-  return value
-    .replace(/\b(?:mqtts?|wss?):\/\/\S+/gi, "[redacted-url]")
-    .replace(/\b[0-9a-f]{32,}\b/gi, "[redacted-key]");
-}
-
 function summarizeMeshcoreResponse(value: string | undefined): string | undefined {
   if (!value) {
     return undefined;
@@ -940,13 +835,17 @@ function summarizeMeshcoreResponse(value: string | undefined): string | undefine
   }
 }
 
-function logPayload(log: DashboardLogEntry): unknown {
-  return {
-    at: log.at,
-    level: log.level,
-    message: sanitizeEventMessage(log.message),
-    source: log.source,
-  };
+function isNodesInsertedResponse(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as { code?: unknown };
+    return parsed.code === "NODES_INSERTED";
+  } catch {
+    return false;
+  }
 }
 
 function jobPayload(item: DashboardQueueItem): unknown {
@@ -1003,12 +902,6 @@ function dashboardPayload(state: DashboardState): unknown {
   const snapshot = state.snapshot();
   return {
     generatedAt: snapshot.generatedAt,
-    reader: {
-      mqttSource: {
-        state: snapshot.mqttSource.state,
-      },
-      events: snapshot.logs.slice(0, MAX_API_EVENTS).map(logPayload),
-    },
     queue: {
       items: snapshot.queue.map(queueItemPayload),
       history: snapshot.queueHistory.slice(0, 100).map(queueItemPayload),
@@ -1017,7 +910,9 @@ function dashboardPayload(state: DashboardState): unknown {
       workers: snapshot.workers.map(workerPayload),
     },
     map: {
-      advertsLastHour: snapshot.advertsLastHour.map(advertPayload),
+      advertsLast24Hours: snapshot.advertsLast24Hours
+        .filter((advert) => isNodesInsertedResponse(advert.responseFromMeshcoreIO))
+        .map(advertPayload),
     },
   };
 }

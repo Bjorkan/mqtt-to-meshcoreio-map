@@ -16,7 +16,7 @@ The service consumes MQTT observer messages, validates MeshCore packet data, sig
 - Skips chat adverts, invalid packets, stale replays, and too-frequent reuploads.
 - Generates a new ephemeral MeshCore.io upload identity for each worker on each start.
 - Logs generated public keys, but never logs private keys.
-- Can expose an optional read-only in-memory dashboard with reader decisions, queue state, worker state, and advert coordinates from the last hour.
+- Can expose an optional read-only dashboard with queue state, worker state, and accepted MeshCore.io advert coordinates from the last 24 hours.
 
 Internally this is split into three responsibilities:
 
@@ -47,6 +47,7 @@ Important runtime settings:
 - `MESHCOREIO_RETRIES_ALLOWED`: retry budget placed on each new queue work request. Default: `3`.
 - `MESHCOREIO_REQUEST_TIMEOUT_MS`: HTTP timeout for MeshCore.io requests. Default: `10000`.
 - `MESHCOREIO_MIN_REUPLOAD_SECONDS`: minimum accepted advert timestamp gap per advertised node. Default: `3600`.
+- `TZ`: time zone used for service log timestamps and dashboard-rendered timestamps, for example `Europe/Stockholm`.
 - `ENABLE_DASHBOARD`: enable the read-only dashboard. Default: `false`.
 - `DASHBOARD_PORT`: internal dashboard listen port. Default: `80`.
 
@@ -54,14 +55,16 @@ Each worker creates its own ephemeral MeshCore.io signing identity at startup. I
 
 Numeric environment variables are range-checked. Invalid, negative, zero-where-not-allowed, or unreasonably large values fall back to safe defaults.
 
+In Docker, observer radio statuses and dashboard MeshCore.io response history are stored in SQLite at `/data/observer-status.sqlite`. Change the Compose volume mapping if you want to choose where that database lives on the host.
+
 ## Dashboard
 
-Set `ENABLE_DASHBOARD=true` to serve a small read-only dashboard from the same process. It keeps data in memory only and clears everything on restart. The dashboard shows:
+Set `ENABLE_DASHBOARD=true` to serve a small read-only dashboard from the same process. The dashboard shows:
 
-- MQTT reader decisions and map upload logs.
 - Current queued and active advert upload jobs, with clickable JSON details.
+- The latest 100 adverts that received a MeshCore.io response.
 - Worker state and the job each worker is handling.
-- A read-only OpenStreetMap view for adverts with lat/lon received during the last hour.
+- A read-only OpenStreetMap view for all `NODES_INSERTED` adverts with lat/lon from the last 24 hours.
 
 The browser renders the dashboard from a single read-only JSON endpoint at `/api`.
 MeshCore node-type SVG icons are vendored locally in `src/dashboard/assets/node_types/` from

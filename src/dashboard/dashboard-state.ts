@@ -1,8 +1,9 @@
 import type { MapUploadWorkRequest, RadioParams } from "../map-types.js";
+import type { MeshcoreHistoryStore } from "../observer-status-store.js";
 
 const MAX_LOGS = 500;
 const MAX_QUEUE_HISTORY = 200;
-const ONE_HOUR_MS = 60 * 60 * 1000;
+const DASHBOARD_HISTORY_MS = 24 * 60 * 60 * 1000;
 
 export type DashboardLogLevel = "info" | "warn" | "error";
 
@@ -69,10 +70,10 @@ export interface DashboardSnapshot {
   queue: DashboardQueueItem[];
   queueHistory: DashboardQueueItem[];
   workers: DashboardWorkerSnapshot[];
-  advertsLastHour: DashboardAdvertLocation[];
+  advertsLast24Hours: DashboardAdvertLocation[];
 }
 
-interface DashboardJobSnapshot {
+export interface DashboardJobSnapshot {
   requestId: string;
   retriesAllowed: number;
   advertKey: string;
@@ -86,12 +87,6 @@ interface DashboardJobSnapshot {
   advertLabel: string;
   observerLabel: string;
 }
-
-const ADVERT_STATUS_PRIORITY: Record<DashboardAdvertLocation["status"], number> = {
-  accepted: 3,
-  pending: 2,
-  rejected: 1,
-};
 
 let activeDashboardState: DashboardState | undefined;
 
@@ -128,36 +123,15 @@ function toJobSnapshot(job: MapUploadWorkRequest): DashboardJobSnapshot {
   };
 }
 
-function isPreferredAdvertLocation(
-  candidate: DashboardAdvertLocation,
-  current: DashboardAdvertLocation
-): boolean {
-  const updatedAtComparison = candidate.updatedAt.localeCompare(current.updatedAt);
-  if (updatedAtComparison !== 0) {
-    return updatedAtComparison > 0;
-  }
-
-  const atComparison = candidate.at.localeCompare(current.at);
-  if (atComparison !== 0) {
-    return atComparison > 0;
-  }
-
-  const candidatePriority = ADVERT_STATUS_PRIORITY[candidate.status];
-  const currentPriority = ADVERT_STATUS_PRIORITY[current.status];
-  if (candidatePriority !== currentPriority) {
-    return candidatePriority > currentPriority;
-  }
-
-  return candidate.requestId.localeCompare(current.requestId) > 0;
-}
-
 export interface DashboardStateOptions {
   now?: () => Date;
+  meshcoreHistoryStore?: MeshcoreHistoryStore;
 }
 
 export class DashboardState {
   private nextLogId = 1;
   private readonly now: () => Date;
+  private readonly meshcoreHistoryStore?: MeshcoreHistoryStore;
   private readonly logs: DashboardLogEntry[] = [];
   private readonly adverts = new Map<string, DashboardAdvertLocation>();
   private readonly queueItems = new Map<string, DashboardQueueItem>();
@@ -167,11 +141,13 @@ export class DashboardState {
 
   constructor(options: DashboardStateOptions = {}) {
     this.now = options.now ?? (() => new Date());
+    this.meshcoreHistoryStore = options.meshcoreHistoryStore;
     this.mqttSource = {
       state: "disconnected",
       detail: "Not connected yet.",
       updatedAt: this.isoNow(),
     };
+    this.loadPersistedMeshcoreHistory();
   }
 
   configureWorkers(workerIds: string[]): void {
@@ -307,7 +283,10 @@ export class DashboardState {
   queueHandled(job: MapUploadWorkRequest, responseFromMeshcoreIO?: string): void {
     this.upsertQueueItem(job, "handled", null, undefined, "Handled.", responseFromMeshcoreIO);
     this.updateAdvertStatus(job.requestId, "accepted", "MeshCore.io handled the upload request.", responseFromMeshcoreIO);
-    this.archiveQueueItem(job.requestId);
+    const archived = this.archiveQueueItem(job.requestId);
+    if (archived && responseFromMeshcoreIO !== undefined) {
+      this.persistMeshcoreHistory(archived, this.adverts.get(job.requestId));
+    }
   }
 
   queuePositionsChanged(jobs: MapUploadWorkRequest[]): void {
@@ -361,6 +340,7 @@ export class DashboardState {
   }
 
   snapshot(): DashboardSnapshot {
+    this.cleanupMeshcoreHistory();
     this.cleanupAdvertLocations();
     return {
       generatedAt: this.isoNow(),
@@ -375,7 +355,7 @@ export class DashboardState {
         }),
       queueHistory: [...this.queueHistory],
       workers: [...this.workers.values()].sort((a, b) => a.index - b.index),
-      advertsLastHour: this.preferredAdvertLocations().sort((a, b) => a.at.localeCompare(b.at)),
+      advertsLast24Hours: [...this.adverts.values()].sort((a, b) => a.at.localeCompare(b.at)),
     };
   }
 
@@ -399,10 +379,10 @@ export class DashboardState {
     });
   }
 
-  private archiveQueueItem(requestId: string): void {
+  private archiveQueueItem(requestId: string): DashboardQueueItem | undefined {
     const item = this.queueItems.get(requestId);
     if (!item) {
-      return;
+      return undefined;
     }
 
     this.queueItems.delete(requestId);
@@ -411,6 +391,7 @@ export class DashboardState {
       this.queueHistory.pop();
     }
 
+    return item;
   }
 
   private updateAdvertStatus(
@@ -430,26 +411,55 @@ export class DashboardState {
     advert.updatedAt = this.isoNow();
   }
 
-  private preferredAdvertLocations(): DashboardAdvertLocation[] {
-    const preferredByNode = new Map<string, DashboardAdvertLocation>();
+  private loadPersistedMeshcoreHistory(): void {
+    if (!this.meshcoreHistoryStore) {
+      return;
+    }
 
-    for (const advert of this.adverts.values()) {
-      const existing = preferredByNode.get(advert.nodePublicKey);
-      if (!existing || isPreferredAdvertLocation(advert, existing)) {
-        preferredByNode.set(advert.nodePublicKey, advert);
+    this.cleanupMeshcoreHistory();
+    for (const record of this.meshcoreHistoryStore.loadMeshcoreHistory()) {
+      if (!this.isRecentIso(record.queueItem.updatedAt)) {
+        continue;
+      }
+
+      this.queueHistory.push(record.queueItem);
+      if (record.advert && this.isRecentIso(record.advert.at)) {
+        this.adverts.set(record.advert.requestId, record.advert);
       }
     }
 
-    return [...preferredByNode.values()];
+    this.queueHistory.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    while (this.queueHistory.length > MAX_QUEUE_HISTORY) {
+      this.queueHistory.pop();
+    }
   }
 
   private cleanupAdvertLocations(): void {
-    const oldest = this.now().getTime() - ONE_HOUR_MS;
+    const oldest = this.now().getTime() - DASHBOARD_HISTORY_MS;
     for (const [key, advert] of this.adverts) {
       if (Date.parse(advert.at) < oldest) {
         this.adverts.delete(key);
       }
     }
+  }
+
+  private persistMeshcoreHistory(
+    queueItem: DashboardQueueItem,
+    advert: DashboardAdvertLocation | undefined
+  ): void {
+    this.meshcoreHistoryStore?.upsertMeshcoreHistory({
+      queueItem,
+      advert,
+    });
+    this.cleanupMeshcoreHistory();
+  }
+
+  private cleanupMeshcoreHistory(): void {
+    this.meshcoreHistoryStore?.deleteMeshcoreHistoryOlderThan(this.now().getTime() - DASHBOARD_HISTORY_MS);
+  }
+
+  private isRecentIso(value: string): boolean {
+    return Date.parse(value) >= this.now().getTime() - DASHBOARD_HISTORY_MS;
   }
 
   private isoNow(): string {

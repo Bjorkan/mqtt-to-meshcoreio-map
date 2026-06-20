@@ -7,7 +7,10 @@ import {
   MeshcoreMapUploader,
   type MapUploaderConfig,
 } from "./map-uploader.js";
+import { SqliteObserverStatusStore, type MeshcoreDashboardStore } from "./observer-status-store.js";
 import type { MapUploadWorkRequest } from "./map-types.js";
+
+const OBSERVER_STATUS_SQLITE_PATH = "/data/observer-status.sqlite";
 
 export interface RuntimeConfig {
   sourceUrl: string;
@@ -94,6 +97,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
       retriesAllowed: envIntInRange(env.MESHCOREIO_RETRIES_ALLOWED, 3, 0, 100),
     },
   };
+}
+
+function openMeshcoreDashboardStore(): MeshcoreDashboardStore | undefined {
+  try {
+    return new SqliteObserverStatusStore(OBSERVER_STATUS_SQLITE_PATH);
+  } catch (error) {
+    warn(`SQLite persistence disabled: ${(error as Error).message}`);
+    return undefined;
+  }
 }
 
 function log(message: string, source = "runtime"): void {
@@ -241,7 +253,10 @@ export function startRuntime(
   dependencies: RuntimeDependencies = {}
 ): Runtime {
   const dashboardConfig = config.dashboard ?? { enabled: false, port: 80 };
-  const dashboardState = dashboardConfig.enabled ? new DashboardState() : undefined;
+  const meshcoreDashboardStore = dependencies.mapUploader ? undefined : openMeshcoreDashboardStore();
+  const dashboardState = dashboardConfig.enabled
+    ? new DashboardState({ meshcoreHistoryStore: meshcoreDashboardStore })
+    : undefined;
   setActiveDashboardState(dashboardState);
   const dashboard = dashboardState ? startDashboardServer(dashboardState, dashboardConfig.port) : undefined;
   if (dashboard) {
@@ -253,7 +268,13 @@ export function startRuntime(
   if (demoAdverts) {
     log("Dashboard demo adverts enabled.");
   }
-  const uploader = dependencies.mapUploader ?? new MeshcoreMapUploader(config.mapUploader, { dashboardState });
+  if (meshcoreDashboardStore) {
+    log(`SQLite persistence enabled at ${OBSERVER_STATUS_SQLITE_PATH}.`);
+  }
+  const uploader = dependencies.mapUploader ?? new MeshcoreMapUploader(config.mapUploader, {
+    dashboardState,
+    observerStatusStore: meshcoreDashboardStore,
+  });
   const ready = Promise.resolve(uploader.ready).then(() => undefined);
   const connect = dependencies.connect ?? mqtt.connect;
   const client = connect(config.sourceUrl, buildMqttOptions(config));
@@ -333,6 +354,7 @@ export function startRuntime(
       if (demoAdverts) {
         clearInterval(demoAdverts);
       }
+      meshcoreDashboardStore?.close?.();
       await dashboard?.close();
       setActiveDashboardState(undefined);
     },

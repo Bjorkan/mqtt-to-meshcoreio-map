@@ -16,6 +16,7 @@ import {
   makeAdvertPacket,
   makeConfig,
   makeFetch,
+  makeUploaderDependencies,
   rememberDefaultStatus,
   signedRequestData,
 } from '../mqtt-reader/helpers.mjs';
@@ -32,7 +33,7 @@ test('logs map API accepted and recently-updated responses for pushed adverts', 
     ],
   ]) {
     const { fetch } = makeFetch({ text });
-    const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+    const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
     await rememberDefaultStatus(uploader);
 
     const packet = makeAdvertPacket({ timestamp: 1_800_090_000 + text.length });
@@ -53,10 +54,9 @@ test('does not retry terminal map API responses', async () => {
     status: 409,
     text: '{"error":"Advert recently processed, ignoring","code":"ERR_ADVERT_DUPLICATE"}',
   });
-  const uploader = new MeshcoreMapUploader(makeConfig(), {
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
     fetch,
-    workerDelay: async () => {},
-  });
+  }));
   await rememberDefaultStatus(uploader);
 
   const logs = await captureConsoleOutput(async () => {
@@ -79,7 +79,7 @@ test('does not retry terminal map API responses', async () => {
 test('signs map uploads with a generated ephemeral upload identity', async () => {
   const { fetch, requests } = makeFetch();
   const signingIdentity = createMapUploadSigningIdentity();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch, signingIdentity });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch, signingIdentity }));
   await uploader.ready;
   await rememberDefaultStatus(uploader);
 

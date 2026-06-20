@@ -18,6 +18,20 @@ const MAP_LOG_COLORS = {
   nodeId: "\x1b[95m",
 };
 
+function configuredTimeZone(): string | undefined {
+  const timeZone = process.env.TZ?.trim();
+  if (!timeZone) {
+    return undefined;
+  }
+
+  try {
+    new Intl.DateTimeFormat("sv-SE", { timeZone }).format(new Date(0));
+    return timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
 export function trimLogBody(value: string): string {
   return value.length > MAX_LOG_BODY_CHARS
     ? `${value.slice(0, MAX_LOG_BODY_CHARS)}...`
@@ -45,7 +59,7 @@ function colorizeMapUploadPrefix(label: string): string {
 
 function mapUploadLogTime(date = new Date()): string {
   return new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Europe/Stockholm",
+    timeZone: configuredTimeZone(),
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,

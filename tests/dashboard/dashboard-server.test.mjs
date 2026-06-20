@@ -60,19 +60,19 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /function advertNodeType/);
       assert.match(body, /normalized === "REPEATER"\) return 2/);
       assert.match(body, /normalized === "ROOM"\) return 3/);
-      assert.match(body, /function clusterStatus/);
       assert.match(body, /meshcore-cluster-icon/);
       assert.match(body, /meshcore-node-icon/);
       // Vendored SVG icons loaded from local repository assets
       assert.match(body, /NODE_TYPE_SVG_TEMPLATES/);
-      assert.match(body, /function tintNodeTypeSvg/);
-      assert.match(body, /STATUS_COLORS/);
+      assert.match(body, /function nodeTypeSvg/);
       // Templates for all three node types include the fill placeholder for runtime tinting
       assert.ok(body.split('__NODE_TYPE_FILL__').length - 1 >= 3, 'all three node type templates have fill placeholder');
-      // Status colours use CSS variables referencing the site palette
-      assert.match(body, /accepted:\s*'var\(--ok\)'/);
-      assert.match(body, /pending:\s*'var\(--warn\)'/);
-      assert.match(body, /rejected:\s*'var\(--error\)'/);
+      // Map markers use the official map's update-recent green filter over the official base icon colour.
+      assert.match(body, /saturate\(5\) hue-rotate\(260deg\)/);
+      assert.match(body, /#667b89/);
+      assert.doesNotMatch(body, /function clusterStatus/);
+      assert.doesNotMatch(body, /function markerStatus/);
+      assert.doesNotMatch(body, /STATUS_COLORS/);
       // Old CSS-dot approach must not be present
       assert.doesNotMatch(body, /meshcore-node-dot/);
       assert.match(body, /\.leaflet-top, \.leaflet-bottom \{ z-index: 900; \}/);
@@ -80,7 +80,8 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /--warn: #f4c95d/);
       assert.match(body, /--error: #ff6b6b/);
       assert.match(body, /class="dashboard-error" id="dashboard-error" role="status" aria-live="polite"/);
-      assert.match(body, /const POLL_INTERVAL_MS = 2000;/);
+      assert.match(body, /const POLL_INTERVAL_MS = 10000;/);
+      assert.match(body, /const DASHBOARD_TIME_ZONE = /);
       assert.match(body, /function setExpandedMap/);
       assert.match(body, /mapSection\.classList\.toggle\("is-expanded"/);
       assert.match(body, /100dvh/);
@@ -93,6 +94,10 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /window\.setTimeout\(runRefreshLoop, delay\)/);
       assert.match(body, /renderWhenChanged\("map", adverts, document\.getElementById\("map"\), \(\) => renderMap\(adverts\), mapSignature\)/);
       assert.match(body, /Live update failed: /);
+      assert.doesNotMatch(body, />Events</);
+      assert.doesNotMatch(body, /id="logs"/);
+      assert.doesNotMatch(body, /id="mqtt-status"/);
+      assert.doesNotMatch(body, /renderLogs/);
       assert.doesNotMatch(body, /function markerColor/);
       assert.doesNotMatch(body, /NODE_TYPE_SVGS/);
       assert.doesNotMatch(body, /role="img"/);
@@ -123,17 +128,10 @@ test("dashboard API returns the expected payload shape", async () => {
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.equal(body.reader.mqttSource.state, "disconnected");
-    assert.equal(body.reader.mqttSource.detail, undefined);
-    assert.equal(body.reader.events.length, 3);
-    assert.equal(body.reader.decisions, undefined);
-    assert.deepEqual(
-      body.reader.events.map((event) => event.source),
-      ["runtime", "map-upload", "mqtt-reader"]
-    );
+    assert.equal(body.reader, undefined);
     assert.deepEqual(body.queue.items, []);
     assert.deepEqual(body.worker.workers, []);
-    assert.deepEqual(body.map.advertsLastHour, []);
+    assert.deepEqual(body.map.advertsLast24Hours, []);
   });
 });
 
@@ -169,19 +167,19 @@ test("dashboard API exposes only render-safe fields", async () => {
     const serialized = JSON.stringify(body);
 
     assert.equal(response.status, 200);
-    assert.equal(body.reader.events[0].message, "Using key [redacted-key] from [redacted-url]");
+    assert.equal(body.reader, undefined);
     assert.equal(body.queue.history[0].job.requestKey, "request-");
     assert.equal(body.queue.history[0].job.requestId, undefined);
     assert.equal(body.queue.history[0].job.nodeKey, "aaaaaaaa");
     assert.equal(body.queue.history[0].job.nodePublicKey, job.nodePublicKey);
     assert.deepEqual(body.queue.history[0].job.radioParams, { freq: 869.5, bw: 125, sf: 9, cr: 5 });
     assert.equal(body.queue.history[0].responseSummary, "NODES_INSERTED");
-    assert.equal(body.map.advertsLastHour[0].requestKey, "request-");
-    assert.equal(body.map.advertsLastHour[0].requestId, undefined);
-    assert.equal(body.map.advertsLastHour[0].advertType, "REPEATER");
-    assert.equal(body.map.advertsLastHour[0].nodeKey, "aaaaaaaa");
-    assert.equal(body.map.advertsLastHour[0].nodePublicKey, job.nodePublicKey);
-    assert.equal(body.map.advertsLastHour[0].radioParams, undefined);
+    assert.equal(body.map.advertsLast24Hours[0].requestKey, "request-");
+    assert.equal(body.map.advertsLast24Hours[0].requestId, undefined);
+    assert.equal(body.map.advertsLast24Hours[0].advertType, "REPEATER");
+    assert.equal(body.map.advertsLast24Hours[0].nodeKey, "aaaaaaaa");
+    assert.equal(body.map.advertsLast24Hours[0].nodePublicKey, job.nodePublicKey);
+    assert.equal(body.map.advertsLast24Hours[0].radioParams, undefined);
     assert.equal(body.worker.workers[0].workerKey, "worker-1");
     assert.equal(body.worker.workers[0].id, undefined);
     assert.equal(body.worker.workers[0].currentJob.requestKey, "request-");
@@ -192,7 +190,7 @@ test("dashboard API exposes only render-safe fields", async () => {
     assert.equal(body.queue.history[0].id, undefined);
     assert.equal(body.queue.history[0].position, undefined);
     assert.equal(body.queue.history[0].workerId, undefined);
-    assert.equal(body.map.advertsLastHour[0].id, undefined);
+    assert.equal(body.map.advertsLast24Hours[0].id, undefined);
     assert.equal(body.worker.workers[0].updatedAt, undefined);
     assert.equal(serialized.includes("deadbeef"), false);
     assert.equal(serialized.includes("rawPacketHex"), false);
@@ -201,6 +199,60 @@ test("dashboard API exposes only render-safe fields", async () => {
     assert.equal(serialized.includes("observer"), false);
     assert.equal(serialized.includes("broker.local"), false);
     assert.equal(serialized.includes("mqtt://"), false);
+    assert.equal(serialized.includes("Using key"), false);
+  } finally {
+    await server.close();
+  }
+});
+
+test("dashboard map API exposes only NODES_INSERTED adverts", async () => {
+  const state = new DashboardState({
+    now: () => new Date("2026-06-19T10:00:00.000Z"),
+  });
+  const inserted = makeJob({
+    requestId: "inserted-1",
+    nodeName: "SE-STO-INSERTED",
+    nodePublicKey: "b".repeat(64),
+  });
+  const duplicate = makeJob({
+    requestId: "duplicate-1",
+    nodeName: "SE-STO-DUPLICATE",
+    nodePublicKey: "c".repeat(64),
+  });
+  const pending = makeJob({
+    requestId: "pending-1",
+    nodeName: "SE-STO-PENDING",
+    nodePublicKey: "d".repeat(64),
+  });
+
+  for (const [job, lat] of [[inserted, 59.3293], [duplicate, 60.1282], [pending, 57.7089]]) {
+    state.recordAdvertLocation({
+      requestId: job.requestId,
+      nodeName: job.nodeName,
+      nodePublicKey: job.nodePublicKey,
+      advertType: job.advertType,
+      advertTimestamp: job.advertTimestamp,
+      observerId: job.observerId,
+      observerName: job.observerName,
+      lat,
+      lon: 18.0686,
+    });
+  }
+  state.queueHandled(inserted, '{"code":"NODES_INSERTED","message":"accepted"}');
+  state.queueHandled(duplicate, '{"code":"ERR_ADVERT_DUPLICATE","error":"Advert recently processed, ignoring"}');
+
+  const server = startDashboardServer(state, 0);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  try {
+    const response = await fetch(`${server.url}/api`);
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      body.map.advertsLast24Hours.map((advert) => advert.nodeName),
+      ["SE-STO-INSERTED"]
+    );
   } finally {
     await server.close();
   }

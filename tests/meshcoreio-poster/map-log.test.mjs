@@ -9,8 +9,10 @@ import {
 test('colorizes only map upload log prefix contents', () => {
   const originalNoColor = process.env.NO_COLOR;
   const originalLogColor = process.env.LOG_COLOR;
+  const originalTimeZone = process.env.TZ;
   delete process.env.NO_COLOR;
   delete process.env.LOG_COLOR;
+  process.env.TZ = 'Europe/Stockholm';
 
   try {
     assert.equal(
@@ -35,12 +37,46 @@ test('colorizes only map upload log prefix contents', () => {
     } else {
       process.env.LOG_COLOR = originalLogColor;
     }
+
+    if (originalTimeZone === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = originalTimeZone;
+    }
+  }
+});
+
+test('uses TZ for map upload log timestamps', () => {
+  const originalNoColor = process.env.NO_COLOR;
+  const originalTimeZone = process.env.TZ;
+  process.env.NO_COLOR = '1';
+  process.env.TZ = 'UTC';
+
+  try {
+    assert.equal(
+      formatMapUploadLogPrefix(new Date('2026-06-17T19:14:03.245Z')),
+      '[Map upload 19:14]'
+    );
+  } finally {
+    if (originalNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = originalNoColor;
+    }
+
+    if (originalTimeZone === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = originalTimeZone;
+    }
   }
 });
 
 test('sanitizes control characters in map upload log lines', () => {
   const originalNoColor = process.env.NO_COLOR;
+  const originalTimeZone = process.env.TZ;
   process.env.NO_COLOR = '1';
+  process.env.TZ = 'Europe/Stockholm';
 
   try {
     const line = formatMapUploadLogLine('bad\nnode\x1b[31m', new Date('2026-06-17T19:14:03.245Z'));
@@ -50,6 +86,12 @@ test('sanitizes control characters in map upload log lines', () => {
       delete process.env.NO_COLOR;
     } else {
       process.env.NO_COLOR = originalNoColor;
+    }
+
+    if (originalTimeZone === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = originalTimeZone;
     }
   }
 });

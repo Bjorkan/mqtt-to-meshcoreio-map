@@ -20,8 +20,9 @@ import {
   readString,
 } from "../map-utils.js";
 import { formatMapUploadLogLine, logMapUpload, warnMapUpload } from "../map-log.js";
-import type { AdvertLogContext, MapUploaderConfig, ObserverState } from "../map-types.js";
+import type { AdvertLogContext, MapUploaderConfig, MapUploaderDependencies, ObserverState } from "../map-types.js";
 import type { DashboardState } from "../dashboard/dashboard-state.js";
+import type { ObserverStatusStore } from "../observer-status-store.js";
 
 export class MqttBrokerAdvertReader {
   private readonly now: () => number;
@@ -32,13 +33,16 @@ export class MqttBrokerAdvertReader {
   constructor(
     private readonly config: MapUploaderConfig,
     private readonly queue: AdvertPostingQueue,
-    dependencies: { dashboardState?: DashboardState; now?: () => number } = {}
+    dependencies: Pick<MapUploaderDependencies, "dashboardState" | "now" | "observerStatusStore"> = {}
   ) {
     this.now = dependencies.now ?? Date.now;
     this.dashboardState = dependencies.dashboardState;
+    this.observerStatusStore = dependencies.observerStatusStore;
+    this.loadPersistedObserverStatuses();
   }
 
   private readonly dashboardState?: DashboardState;
+  private readonly observerStatusStore?: ObserverStatusStore;
 
   handleMqttMessage(topic: string, payload: Buffer): void {
     this.processMqttMessage(topic, payload).catch((err: Error) => {
@@ -61,13 +65,11 @@ export class MqttBrokerAdvertReader {
     }
 
     if (type !== "raw" && type !== "packets") {
-      this.dashboardState?.recordDecision(`Topic ${topic} is not status/raw/packets. Ignoring.`);
       return;
     }
 
     const candidate = buildPacketCandidate(topic, payload, type);
     if (!candidate) {
-      this.dashboardState?.recordDecision(`MQTT ${type} message on ${topic} did not contain an uploadable packet candidate.`);
       return;
     }
 
@@ -101,12 +103,10 @@ export class MqttBrokerAdvertReader {
 
     if (parsedComplete && !parsedValid) {
       warnMapUpload(`Invalid complete radio parameters for ${readString(data.origin) ?? originId}. Keeping the latest valid observer status.`);
-      this.dashboardState?.recordDecision(`Status for ${readString(data.origin) ?? originId} had complete but invalid radio parameters; kept latest valid observer status.`, "warn");
       return;
     }
 
     if (!parsedValid) {
-      this.dashboardState?.recordDecision(`Status for ${readString(data.origin) ?? originId} did not include complete valid radio parameters. Ignoring.`);
       return;
     }
 
@@ -118,7 +118,7 @@ export class MqttBrokerAdvertReader {
     };
 
     this.observers.set(originId, state);
-    this.dashboardState?.recordDecision(`Stored observer status for ${formatObserverLabel(state, originId)} with freq ${parsedParams.freq} MHz, BW ${parsedParams.bw}, SF ${parsedParams.sf}, CR ${parsedParams.cr}.`);
+    this.observerStatusStore?.upsert(state);
   }
 
   private async processPacket(candidate: { rawPacket: Buffer; observerId?: string }): Promise<void> {
@@ -131,7 +131,6 @@ export class MqttBrokerAdvertReader {
     }
 
     if (packet.payload_type_string !== "ADVERT") {
-      this.dashboardState?.recordDecision(`Packet from ${candidate.observerId ?? "unknown observer"} has payload type ${packet.payload_type_string ?? "unknown"}, not ADVERT. Ignoring.`);
       return;
     }
 
@@ -263,14 +262,30 @@ export class MqttBrokerAdvertReader {
     return `${pubKey}:${timestamp}`;
   }
 
+  private loadPersistedObserverStatuses(): void {
+    if (!this.observerStatusStore) {
+      return;
+    }
+
+    const oldestObserverStatus = this.now() - OBSERVER_TTL_MS;
+    this.observerStatusStore.deleteOlderThan(oldestObserverStatus);
+    for (const observer of this.observerStatusStore.loadAll()) {
+      if (observer.originId && observer.updatedAt >= oldestObserverStatus) {
+        this.observers.set(observer.originId, observer);
+      }
+    }
+  }
+
   private cleanupState(): void {
     const now = this.now();
 
     for (const [observerId, observer] of this.observers) {
       if (now - observer.updatedAt > OBSERVER_TTL_MS) {
         this.observers.delete(observerId);
+        this.observerStatusStore?.delete(observerId);
       }
     }
+    this.observerStatusStore?.deleteOlderThan(now - OBSERVER_TTL_MS);
 
     const oldestAdvertTimestamp = Math.floor(now / 1000) - SEEN_ADVERT_TTL_SECONDS;
     for (const [pubKey, timestamp] of this.seenAdverts) {

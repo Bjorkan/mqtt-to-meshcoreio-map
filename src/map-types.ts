@@ -1,4 +1,5 @@
 import type { DashboardState } from "./dashboard/dashboard-state.js";
+import type { ObserverStatusStore } from "./observer-status-store.js";
 
 export interface MapUploaderConfig {
   enabled: boolean;
@@ -20,6 +21,7 @@ export interface MapUploaderDependencies {
   dashboardState?: DashboardState;
   fetch?: typeof fetch;
   now?: () => number;
+  observerStatusStore?: ObserverStatusStore;
   signingIdentity?: MapUploadSigningIdentity;
   workerDelay?: (ms: number) => Promise<void>;
 }

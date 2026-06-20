@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
   createMapUploadSigningIdentity,
   MeshcoreMapUploader,
+  SqliteObserverStatusStore,
 } from '../../dist/map-uploader.js';
+import { DashboardState } from '../../dist/dashboard/dashboard-state.js';
 import {
   API_URL,
   FIFTH_ADVERT_SEED,
@@ -17,6 +22,7 @@ import {
   makeAdvertPacket,
   makeConfig,
   makeFetch,
+  makeUploaderDependencies,
   rememberDefaultStatus,
   signedRequestData,
   statusPayload,
@@ -25,7 +31,7 @@ import {
 test('uploads verified packets.raw adverts with firmware radio parameters', async () => {
   const { fetch, requests } = makeFetch();
   const signingIdentity = createMapUploadSigningIdentity();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch, signingIdentity });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch, signingIdentity }));
   await rememberDefaultStatus(uploader);
 
   const packet = makeAdvertPacket({});
@@ -54,14 +60,14 @@ test('uploads verified packets.raw adverts with firmware radio parameters', asyn
 
 test('silently ignores duplicate adverts already queued or in flight', async () => {
   let releaseFetch;
-  const uploader = new MeshcoreMapUploader(makeConfig(), {
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
     fetch: async () => {
       await new Promise((resolve) => {
         releaseFetch = resolve;
       });
       return { ok: true, status: 200, text: async () => '{"code":"NODES_INSERTED"}' };
     },
-  });
+  }));
   await rememberDefaultStatus(uploader);
 
   const packet = makeAdvertPacket({ timestamp: 1_800_091_000 });
@@ -86,7 +92,7 @@ test('silently ignores duplicate adverts already queued or in flight', async () 
 
 test('does not log successful observer status updates as map uploads', async () => {
   const { fetch } = makeFetch();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
 
   const logs = await captureConsoleLog(async () => {
     await rememberDefaultStatus(uploader);
@@ -95,9 +101,27 @@ test('does not log successful observer status updates as map uploads', async () 
   assert.deepEqual(logs, []);
 });
 
+test('does not add routine status and empty packet messages to dashboard events', async () => {
+  const dashboardState = new DashboardState({
+    now: () => new Date('2026-06-19T10:00:00.000Z'),
+  });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
+    fetch: makeFetch().fetch,
+    dashboardState,
+  }));
+
+  await rememberDefaultStatus(uploader);
+  await uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/packets`,
+    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, type: 'PACKET' }))
+  );
+
+  assert.deepEqual(dashboardState.snapshot().logs, []);
+});
+
 test('uploads verified raw.data adverts with human readable radio parameters', async () => {
   const { fetch, requests } = makeFetch();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
   await uploader.processMqttMessage(
     'meshcore/STO/observer-key/status',
     statusPayload({ radio: '869.617981 MHz · SF8 · BW62.5 · CR8' })
@@ -125,7 +149,7 @@ test('normalizes direct frequency fields from MHz, kHz, and Hz', async () => {
     [869617981, 869.618],
   ]) {
     const { fetch, requests } = makeFetch();
-    const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+    const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
     await uploader.processMqttMessage(
       'meshcore/STO/observer-key/status',
       statusPayload({ radio: undefined, params: { freq, bw: 62500, sf: 8, cr: 8 } })
@@ -149,7 +173,7 @@ test('normalizes direct frequency fields from MHz, kHz, and Hz', async () => {
 
 test('normalizes comma radio strings from Hz and Hz bandwidth', async () => {
   const { fetch, requests } = makeFetch();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
   await uploader.processMqttMessage(
     'meshcore/STO/observer-key/status',
     statusPayload({ radio: '869617981,62500,8,8' })
@@ -179,7 +203,7 @@ test('uses 64-hex observer id from standard, meshrank, and custom topics when pa
     `mynetwork/raw/${OBSERVER_ID}`,
   ]) {
     const { fetch, requests } = makeFetch();
-    const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+    const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
     await uploader.processMqttMessage(`mynetwork/status/${OBSERVER_ID}`, statusPayload({ origin_id: undefined }));
 
     const packet = makeAdvertPacket({ timestamp: 1_800_030_000 + requests.length + topic.length });
@@ -195,7 +219,7 @@ test('uses 64-hex observer id from standard, meshrank, and custom topics when pa
 test('normalizes uppercase observer origin_id and topic ids', async () => {
   const upperObserverId = OBSERVER_ID.toUpperCase();
   const { fetch, requests } = makeFetch();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
 
   await uploader.processMqttMessage(
     `meshcore/STO/${upperObserverId}/status`,
@@ -215,7 +239,7 @@ test('normalizes uppercase observer origin_id and topic ids', async () => {
 
 test('skips custom topic packets without payload origin_id or 64-hex topic id', async () => {
   const { fetch, requests } = makeFetch();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
   await rememberDefaultStatus(uploader);
 
   const packet = makeAdvertPacket({});
@@ -229,7 +253,7 @@ test('skips custom topic packets without payload origin_id or 64-hex topic id', 
 
 test('keeps the latest valid radio params when a later complete status is invalid', async () => {
   const { fetch, requests } = makeFetch();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
 
   await uploader.processMqttMessage(
     `meshcore/STO/${OBSERVER_ID}/status`,
@@ -259,7 +283,7 @@ test('keeps the latest valid radio params when a later complete status is invali
 
 test('keeps previous valid radio params when later status is offline or incomplete', async () => {
   const { fetch, requests } = makeFetch();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
   await rememberDefaultStatus(uploader);
   await uploader.processMqttMessage(
     `meshcore/STO/${OBSERVER_ID}/status`,
@@ -283,7 +307,7 @@ test('keeps previous valid radio params when later status is offline or incomple
 
 test('replaces previous observer radio params when a newer valid status arrives', async () => {
   const { fetch, requests } = makeFetch();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
 
   await rememberDefaultStatus(uploader);
   await uploader.processMqttMessage(
@@ -308,16 +332,16 @@ test('replaces previous observer radio params when a newer valid status arrives'
   });
 });
 
-test('drops observer radio status after 24 hours without a new valid status', async () => {
+test('drops observer radio status after one hour without a new valid status', async () => {
   const { fetch, requests } = makeFetch();
   let now = 1_000_000;
-  const uploader = new MeshcoreMapUploader(makeConfig(), {
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
     fetch,
     now: () => now,
-  });
+  }));
 
   await rememberDefaultStatus(uploader);
-  now += 24 * 60 * 60 * 1000 + 1;
+  now += 60 * 60 * 1000 + 1;
 
   await uploader.processMqttMessage(
     `meshcore/STO/${OBSERVER_ID}/status`,
@@ -331,13 +355,81 @@ test('drops observer radio status after 24 hours without a new valid status', as
   assert.equal(requests.length, 0);
 });
 
+test('loads persisted observer radio status from SQLite after restart', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'mqtt-to-map-observers-'));
+  const dbPath = join(directory, 'observer-status.sqlite');
+
+  try {
+    const firstStore = new SqliteObserverStatusStore(dbPath);
+    const firstUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
+      fetch: makeFetch().fetch,
+      observerStatusStore: firstStore,
+      now: () => 1_000_000,
+    }));
+    await rememberDefaultStatus(firstUploader);
+    firstStore.close();
+
+    const { fetch, requests } = makeFetch();
+    const secondStore = new SqliteObserverStatusStore(dbPath);
+    const secondUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
+      fetch,
+      observerStatusStore: secondStore,
+      now: () => 1_000_000 + 30 * 60 * 1000,
+    }));
+
+    await secondUploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_070_000 })) }))
+    );
+
+    assert.equal(requests.length, 1);
+    assert.deepEqual(signedRequestData(requests).params, {
+      freq: 869.618,
+      bw: 62.5,
+      sf: 8,
+      cr: 8,
+    });
+    secondStore.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('removes persisted observer radio status older than one hour', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'mqtt-to-map-observers-'));
+  const dbPath = join(directory, 'observer-status.sqlite');
+
+  try {
+    const firstStore = new SqliteObserverStatusStore(dbPath);
+    firstStore.upsert({
+      origin: 'SE-STO-OBSERVER',
+      originId: OBSERVER_ID,
+      params: { freq: 869.618, bw: 62.5, sf: 8, cr: 8 },
+      updatedAt: 1_000_000,
+    });
+    firstStore.close();
+
+    const secondStore = new SqliteObserverStatusStore(dbPath);
+    new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
+      fetch: makeFetch().fetch,
+      observerStatusStore: secondStore,
+      now: () => 1_000_000 + 60 * 60 * 1000 + 1,
+    }));
+
+    assert.deepEqual(secondStore.loadAll(), []);
+    secondStore.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('prefers packet raw over data and raw topic data over raw field', async () => {
   const packet = makeAdvertPacket({ timestamp: 1_800_060_000 });
   const junkPacket = makeAdvertPacket({ timestamp: 1_800_063_700, type: advertTypes.chat });
 
   {
     const { fetch, requests } = makeFetch();
-    const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+    const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
     await rememberDefaultStatus(uploader);
 
     await uploader.processMqttMessage(
@@ -355,7 +447,7 @@ test('prefers packet raw over data and raw topic data over raw field', async () 
 
   {
     const { fetch, requests } = makeFetch();
-    const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+    const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
     await rememberDefaultStatus(uploader);
 
     await uploader.processMqttMessage(
@@ -380,7 +472,7 @@ test('skips adverts when radio params are complete but outside sane ranges', asy
     '869.617981,62.5,8,99',
   ]) {
     const { fetch, requests } = makeFetch();
-    const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+    const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
     await uploader.processMqttMessage(
       `meshcore/STO/${OBSERVER_ID}/status`,
       statusPayload({ radio })
@@ -401,7 +493,7 @@ test('skips adverts when radio params are complete but outside sane ranges', asy
 test('deduplicates the same advert when raw and packets arrive together', async () => {
   let releaseFetch;
   const requests = [];
-  const uploader = new MeshcoreMapUploader(makeConfig(), {
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
     fetch: async (url, init) => {
       requests.push({ url, init });
       await new Promise((resolve) => {
@@ -409,7 +501,7 @@ test('deduplicates the same advert when raw and packets arrive together', async 
       });
       return { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
-  });
+  }));
   await rememberDefaultStatus(uploader);
 
   const packet = makeAdvertPacket({});
@@ -430,7 +522,7 @@ test('deduplicates the same advert when raw and packets arrive together', async 
 
 test('does not let an invalid in-flight copy suppress a later valid copy', async () => {
   const { fetch, requests } = makeFetch();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
   await rememberDefaultStatus(uploader);
 
   const invalid = makeAdvertPacket({ tamperSignature: true });
@@ -453,13 +545,12 @@ test('dry-run processes five adverts end to end without posting invalid or valid
   const requests = [];
   const uploader = new MeshcoreMapUploader(makeConfig({
     dryRun: true,
-  }), {
+  }), makeUploaderDependencies({
     fetch: async (url, init) => {
       requests.push({ url, init });
       throw new Error('dry-run should not call fetch');
     },
-    workerDelay: async () => {},
-  });
+  }));
   await rememberDefaultStatus(uploader);
 
   const adverts = [
@@ -510,7 +601,7 @@ test('dry-run processes five adverts end to end without posting invalid or valid
 
 test('skips adverts until observer radio parameters are complete', async () => {
   const { fetch, requests } = makeFetch();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
   const packet = makeAdvertPacket({});
 
   const logs = await captureConsoleOutput(async () => {
@@ -543,7 +634,7 @@ test('skips chat, none, and invalid-signature adverts', async () => {
     ],
   ]) {
     const { fetch, requests } = makeFetch();
-    const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+    const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
     await rememberDefaultStatus(uploader);
 
     const logs = await captureConsoleOutput(async () => {
@@ -561,7 +652,7 @@ test('skips chat, none, and invalid-signature adverts', async () => {
 test('uploads repeater, room, and sensor adverts only', async () => {
   for (const type of [advertTypes.repeater, advertTypes.room, advertTypes.sensor]) {
     const { fetch, requests } = makeFetch();
-    const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+    const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
     await rememberDefaultStatus(uploader);
 
     await uploader.processMqttMessage(
@@ -579,10 +670,10 @@ test('uploads repeater, room, and sensor adverts only', async () => {
 test('applies replay, reupload interval, and queued upload retry', async () => {
   const { fetch, requests } = makeFetch();
   let now = 10_000;
-  const uploader = new MeshcoreMapUploader(makeConfig(), {
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
     fetch,
     now: () => now,
-  });
+  }));
   await rememberDefaultStatus(uploader);
 
   const first = makeAdvertPacket({ timestamp: 1_800_000_000 });
@@ -606,7 +697,7 @@ test('applies replay, reupload interval, and queued upload retry', async () => {
 
   const retryRequests = [];
   let retryAttempt = 0;
-  const retryUploader = new MeshcoreMapUploader(makeConfig(), {
+  const retryUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
     fetch: async (url, init) => {
       retryRequests.push({ url, init });
       retryAttempt += 1;
@@ -615,8 +706,7 @@ test('applies replay, reupload interval, and queued upload retry', async () => {
         : { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
     now: () => now,
-    workerDelay: async () => {},
-  });
+  }));
   await rememberDefaultStatus(retryUploader);
   const retryPacket = makeAdvertPacket({ timestamp: 1_800_100_000 });
 
@@ -631,10 +721,10 @@ test('applies replay, reupload interval, and queued upload retry', async () => {
 test('suppresses repeated drop logs for the same advert and reason', async () => {
   const { fetch, requests } = makeFetch();
   let now = 10_000;
-  const uploader = new MeshcoreMapUploader(makeConfig(), {
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
     fetch,
     now: () => now,
-  });
+  }));
   await rememberDefaultStatus(uploader);
 
   const packet = makeAdvertPacket({ timestamp: 1_800_400_000 });
@@ -672,7 +762,7 @@ test('suppresses repeated drop logs for the same advert and reason', async () =>
 
 test('skips oversized packet hex before parsing', async () => {
   const { fetch, requests } = makeFetch();
-  const uploader = new MeshcoreMapUploader(makeConfig(), { fetch });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
   await rememberDefaultStatus(uploader);
 
   await uploader.processMqttMessage(
