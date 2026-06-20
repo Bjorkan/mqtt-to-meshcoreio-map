@@ -562,8 +562,8 @@ const DASHBOARD_HTML = `<!doctype html>
     }
 
     function markerKey(advert) {
-      const stableParts = [advert.requestKey || "", advert.nodeKey || "", advert.nodePublicKey || ""];
-      if (stableParts.some(Boolean)) return stableParts.join("|");
+      if (advert.nodePublicKey) return "public-key|" + advert.nodePublicKey;
+      if (advert.nodeKey) return "node-key|" + advert.nodeKey;
       return [
         "fallback",
         advert.nodeName || "",
@@ -897,6 +897,33 @@ function advertPayload(advert: DashboardAdvertLocation): unknown {
   };
 }
 
+function mapAdvertIdentity(advert: DashboardAdvertLocation): string {
+  if (advert.nodePublicKey) {
+    return `public-key|${advert.nodePublicKey}`;
+  }
+
+  return [
+    "fallback",
+    advert.nodeName,
+    advert.advertType,
+    advert.lat.toFixed(5),
+    advert.lon.toFixed(5),
+  ].join("|");
+}
+
+function mapAdvertPayloads(adverts: DashboardAdvertLocation[]): unknown[] {
+  const latestByNode = new Map<string, DashboardAdvertLocation>();
+  for (const advert of adverts) {
+    if (!isNodesInsertedResponse(advert.responseFromMeshcoreIO)) {
+      continue;
+    }
+
+    latestByNode.set(mapAdvertIdentity(advert), advert);
+  }
+
+  return [...latestByNode.values()].map(advertPayload);
+}
+
 function dashboardPayload(state: DashboardState): unknown {
   const snapshot = state.snapshot();
   return {
@@ -909,9 +936,7 @@ function dashboardPayload(state: DashboardState): unknown {
       workers: snapshot.workers.map(workerPayload),
     },
     map: {
-      advertsLast24Hours: snapshot.advertsLast24Hours
-        .filter((advert) => isNodesInsertedResponse(advert.responseFromMeshcoreIO))
-        .map(advertPayload),
+      advertsLast24Hours: mapAdvertPayloads(snapshot.advertsLast24Hours),
     },
   };
 }

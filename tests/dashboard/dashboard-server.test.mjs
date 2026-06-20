@@ -87,7 +87,8 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /function setExpandedMap/);
       assert.match(body, /mapSection\.classList\.toggle\("is-expanded"/);
       assert.match(body, /100dvh/);
-      assert.match(body, /if \(stableParts\.some\(Boolean\)\) return stableParts\.join\("\|"\);/);
+      assert.match(body, /if \(advert\.nodePublicKey\) return "public-key\|" \+ advert\.nodePublicKey;/);
+      assert.match(body, /if \(advert\.nodeKey\) return "node-key\|" \+ advert\.nodeKey;/);
       assert.match(body, /Number\(advert\.lat\)\.toFixed\(5\)/);
       assert.match(body, /Number\(advert\.lon\)\.toFixed\(5\)/);
       assert.match(body, /marker\.bindTooltip/);
@@ -255,6 +256,74 @@ test("dashboard map API exposes only NODES_INSERTED adverts", async () => {
       body.map.advertsLast24Hours.map((advert) => advert.nodeName),
       ["SE-STO-INSERTED"]
     );
+  } finally {
+    await server.close();
+  }
+});
+
+test("dashboard map API keeps only the latest NODES_INSERTED advert per public key", async () => {
+  const state = new DashboardState({
+    now: () => new Date("2026-06-19T10:00:00.000Z"),
+  });
+  const nodePublicKey = "e".repeat(64);
+  const older = makeJob({
+    requestId: "older-inserted",
+    nodeName: "SE-STO-OLDER",
+    nodePublicKey,
+  });
+  const newer = makeJob({
+    requestId: "newer-inserted",
+    nodeName: "SE-STO-NEWER",
+    nodePublicKey,
+  });
+
+  state.recordAdvertLocation({
+    requestId: older.requestId,
+    nodeName: older.nodeName,
+    nodePublicKey: older.nodePublicKey,
+    advertType: older.advertType,
+    advertTimestamp: older.advertTimestamp,
+    observerId: older.observerId,
+    observerName: older.observerName,
+    lat: 59.3293,
+    lon: 18.0686,
+  });
+  state.queueHandled(older, '{"code":"NODES_INSERTED","message":"accepted"}');
+
+  state.recordAdvertLocation({
+    requestId: newer.requestId,
+    nodeName: newer.nodeName,
+    nodePublicKey: newer.nodePublicKey,
+    advertType: newer.advertType,
+    advertTimestamp: newer.advertTimestamp + 60,
+    observerId: newer.observerId,
+    observerName: newer.observerName,
+    lat: 60.1282,
+    lon: 18.6435,
+  });
+  state.queueHandled(newer, '{"code":"NODES_INSERTED","message":"accepted"}');
+
+  const server = startDashboardServer(state, 0);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  try {
+    const response = await fetch(`${server.url}/api`);
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.map.advertsLast24Hours, [
+      {
+        requestKey: "newer-in",
+        status: "accepted",
+        statusDetail: "MeshCore.io handled the upload request.",
+        advertType: "REPEATER",
+        nodeName: "SE-STO-NEWER",
+        nodeKey: "eeeeeeee",
+        nodePublicKey,
+        lat: 60.1282,
+        lon: 18.6435,
+      },
+    ]);
   } finally {
     await server.close();
   }
