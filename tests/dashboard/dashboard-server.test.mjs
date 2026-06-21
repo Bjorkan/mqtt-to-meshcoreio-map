@@ -57,7 +57,7 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /maplibre-gl@5\.5\.0/);
       assert.match(body, /new maplibregl\.Map/);
       assert.match(body, /new maplibregl\.NavigationControl/);
-      assert.match(body, /https:\/\/tiles\.openfreemap\.org\/styles\/liberty/);
+      assert.match(body, /https:\/\/tiles\.openfreemap\.org\/styles\/dark/);
       assert.match(body, /maxPitch: 85/);
       assert.match(body, /maplibreMap\.once\("style\.load"/);
       assert.match(body, /function advertNodeType/);
