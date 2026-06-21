@@ -257,6 +257,7 @@ export class DashboardState {
       observerName: input.observerName,
       lat: input.lat,
       lon: input.lon,
+      responseFromMeshcoreIO: existing?.responseFromMeshcoreIO,
     });
     this.cleanupAdvertLocations();
   }
@@ -421,7 +422,9 @@ export class DashboardState {
 
     advert.status = status;
     advert.statusDetail = statusDetail;
-    advert.responseFromMeshcoreIO = responseFromMeshcoreIO;
+    if (responseFromMeshcoreIO !== undefined) {
+      advert.responseFromMeshcoreIO = responseFromMeshcoreIO;
+    }
     advert.updatedAt = this.isoNow();
   }
 

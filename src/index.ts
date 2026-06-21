@@ -167,6 +167,17 @@ const DEMO_STATUSES = [
   { status: "accepted", detail: "Demo advert was accepted as a recent duplicate by Meshcore.io." },
 ] as const;
 
+const DEMO_MOVEMENT_RADIUS = 0.3;
+
+function demoPosition(baseLat: number, baseLon: number, index: number, tick: number): { lat: number; lon: number } {
+  const angle = tick * 0.3 + index * 1.2;
+  const radius = DEMO_MOVEMENT_RADIUS + index * 0.08;
+  return {
+    lat: baseLat + Math.sin(angle) * radius,
+    lon: baseLon + Math.sin(angle + 1.5) * radius,
+  };
+}
+
 const DEMO_WORKER_COUNT = 2;
 
 function makeDemoJob(advert: typeof DEMO_ADVERTS[number], index: number, requestId: string): MapUploadWorkRequest {
@@ -233,17 +244,18 @@ function startDashboardDemoAdverts(state: DashboardState): NodeJS.Timeout {
     // Map markers — run AFTER queue processing so they overwrite any advert deletions
     DEMO_ADVERTS.forEach((advertItem, index) => {
       const demoStatus = DEMO_STATUSES[(index + tick) % DEMO_STATUSES.length];
+      const position = demoPosition(advertItem.lat, advertItem.lon, index, tick);
       state.recordDemoAdvertLocation({
         requestId: sharedIds[index],
         status: demoStatus.status,
         statusDetail: demoStatus.detail,
         nodeName: advertItem.nodeName,
         nodePublicKey: `${String(index + 1).repeat(64)}`.slice(0, 64),
-        advertType: advertItem.type,
+        advertType: advertItem.type.toUpperCase(),
         observerId: `demo-observer-${index + 1}`,
         observerName: "DEMO-OBSERVER",
-        lat: advertItem.lat,
-        lon: advertItem.lon,
+        lat: position.lat,
+        lon: position.lon,
       });
     });
 

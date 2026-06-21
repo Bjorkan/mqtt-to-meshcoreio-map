@@ -43,14 +43,29 @@ const NODE_TYPE_SVG_TEMPLATES = {
   3: readNodeTypeSvgTemplate(3),
 } as const;
 
+const MAP_ICON_COLOR = "#61d394";
+
+function fillSvgTemplate(template: string, color: string): string {
+  return template.replace(new RegExp(NODE_TYPE_COLOR_PLACEHOLDER, "g"), color);
+}
+
+function svgToDataUrl(svg: string): string {
+  return `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`;
+}
+
+const NODE_TYPE_ICON_DATA_URLS = {
+  1: svgToDataUrl(fillSvgTemplate(NODE_TYPE_SVG_TEMPLATES[1], MAP_ICON_COLOR)),
+  2: svgToDataUrl(fillSvgTemplate(NODE_TYPE_SVG_TEMPLATES[2], MAP_ICON_COLOR)),
+  3: svgToDataUrl(fillSvgTemplate(NODE_TYPE_SVG_TEMPLATES[3], MAP_ICON_COLOR)),
+};
+
 const DASHBOARD_HTML = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MQTT to Meshcore.io Map Dashboard</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.css">
   <style>
     :root {
       color-scheme: dark;
@@ -168,42 +183,17 @@ const DASHBOARD_HTML = `<!doctype html>
       border-radius: 8px;
       overflow: hidden;
     }
-    .leaflet-container {
+    .maplibregl-map {
       background: #0b1117;
       color: var(--text);
       font-family: inherit;
     }
-    .leaflet-top, .leaflet-bottom { z-index: 900; }
-    .leaflet-control-attribution {
+    .maplibregl-ctrl-top-right, .maplibregl-ctrl-bottom-right, .maplibregl-ctrl-bottom-left { z-index: 900; }
+    .maplibregl-ctrl-attrib {
       background: rgba(15, 21, 27, 0.82);
       color: var(--muted);
     }
-    .leaflet-control-attribution a { color: var(--accent); }
-    .meshcore-node-icon, .meshcore-cluster-icon { background: none; border: 0; }
-    .meshcore-node-icon svg {
-      width: 32px;
-      height: 32px;
-      display: block;
-      filter: saturate(5) hue-rotate(260deg) drop-shadow(0 1px 3px rgba(0,0,0,0.45));
-    }
-    .meshcore-cluster-icon {
-      background-clip: padding-box;
-      border-radius: 20px;
-      background-color: rgba(102, 123, 137, 0.42);
-      filter: saturate(5) hue-rotate(260deg);
-    }
-    .meshcore-cluster-icon div {
-      width: 30px;
-      height: 30px;
-      margin-left: 5px;
-      margin-top: 5px;
-      border-radius: 15px;
-      display: grid;
-      place-items: center;
-      background-color: #667b89;
-      color: #091015;
-      font: 800 12px "Helvetica Neue", Arial, Helvetica, sans-serif;
-    }
+    .maplibregl-ctrl-attrib a { color: var(--accent); }
     .list {
       display: grid;
       gap: 8px;
@@ -282,6 +272,24 @@ const DASHBOARD_HTML = `<!doctype html>
       font-size: 12px;
       line-height: 1.45;
     }
+    .maplibregl-popup.meshcore-popup .maplibregl-popup-content {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-family: inherit;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .maplibregl-popup.meshcore-popup .maplibregl-popup-tip {
+      border-top-color: var(--panel);
+      border-bottom-color: var(--panel);
+    }
+    .maplibregl-popup.meshcore-popup .maplibregl-popup-close-button {
+      color: var(--muted);
+      font-size: 18px;
+    }
     .close, .icon-button {
       background: var(--panel-2);
       color: var(--text);
@@ -357,8 +365,7 @@ const DASHBOARD_HTML = `<!doctype html>
       <pre id="detail-body"></pre>
     </div>
   </dialog>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.js"></script>
   <script>
     const POLL_INTERVAL_MS = ${DASHBOARD_POLL_INTERVAL_MS};
     const DASHBOARD_TIME_ZONE = ${JSON.stringify(configuredTimeZone())};
@@ -369,10 +376,23 @@ const DASHBOARD_HTML = `<!doctype html>
     const mapSection = document.getElementById("map-section");
     const fullscreenButton = document.getElementById("map-fullscreen");
     const errorBanner = document.getElementById("dashboard-error");
-    const markerIconCache = new Map();
     const markerRecords = new Map();
-    let leafletMap = null;
-    let markerLayer = null;
+    const MAP_ADVERT_SOURCE_ID = "meshcore-adverts";
+    const MAP_ADVERT_LAYER_ID = "meshcore-advert-icons";
+    const MAP_ADVERT_DOT_LAYER_ID = "meshcore-advert-dots";
+    const MAP_ADVERT_HIT_LAYER_ID = "meshcore-advert-hit-area";
+    const MAP_TERRAIN_SOURCE_ID = "meshcore-terrain";
+    const MAP_HILLSHADE_SOURCE_ID = "meshcore-hillshade";
+    const MAP_HILLSHADE_LAYER_ID = "meshcore-hillshade";
+    const MAP_ICON_COLOR = "#61d394";
+    let latestMapAdverts = [];
+    let maplibreMap = null;
+    let mapLayersReady = false;
+    let mapLayerSetupPromise = null;
+    let terrainControlAdded = false;
+    let currentPopup = null;
+    let mapStyleLoaded = false;
+    let pendingRender = null;
 
     document.getElementById("detail-close").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => {
@@ -383,7 +403,7 @@ const DASHBOARD_HTML = `<!doctype html>
       mapSection.classList.toggle("is-expanded", expanded);
       document.body.style.overflow = expanded ? "hidden" : "";
       fullscreenButton.textContent = expanded ? "Exit fullscreen" : "Fullscreen";
-      setTimeout(() => leafletMap?.invalidateSize(), 100);
+      setTimeout(() => maplibreMap?.resize(), 100);
     }
 
     fullscreenButton.addEventListener("click", async () => {
@@ -410,7 +430,7 @@ const DASHBOARD_HTML = `<!doctype html>
 
     document.addEventListener("fullscreenchange", () => {
       fullscreenButton.textContent = document.fullscreenElement ? "Exit fullscreen" : "Fullscreen";
-      setTimeout(() => leafletMap?.invalidateSize(), 100);
+      setTimeout(() => maplibreMap?.resize(), 100);
     });
 
     function fingerprint(value) {
@@ -497,10 +517,7 @@ const DASHBOARD_HTML = `<!doctype html>
 
     // SVG icons are loaded from vendored files in this repository, adapted from meshcore-dev/map.meshcore.io (MIT licence).
     const NODE_TYPE_SVG_TEMPLATES = ${JSON.stringify(NODE_TYPE_SVG_TEMPLATES)};
-
-    function nodeTypeSvg(template) {
-      return String(template || "").replace(${JSON.stringify(NODE_TYPE_COLOR_PLACEHOLDER)}, "#667b89");
-    }
+    const NODE_TYPE_ICON_DATA_URLS = ${JSON.stringify(NODE_TYPE_ICON_DATA_URLS)};
 
     function advertNodeType(advertType) {
       const normalized = String(advertType || "").toUpperCase();
@@ -509,56 +526,85 @@ const DASHBOARD_HTML = `<!doctype html>
       return 1;
     }
 
-    function markerIcon(advert) {
-      const nodeType = advertNodeType(advert.advertType);
-      const cacheKey = String(nodeType);
-      const cached = markerIconCache.get(cacheKey);
-      if (cached) return cached;
-      const svgTemplate = NODE_TYPE_SVG_TEMPLATES[nodeType] || NODE_TYPE_SVG_TEMPLATES[1];
-      const icon = L.divIcon({
-        html: nodeTypeSvg(svgTemplate),
-        className: "meshcore-node-icon meshcore-node-type-" + nodeType,
-        iconSize: [32, 32],
-        iconAnchor: [17, 17],
-        popupAnchor: [0, -16],
-      });
-      markerIconCache.set(cacheKey, icon);
-      return icon;
-    }
-
-    function clusterIcon(cluster) {
-      const count = cluster.getChildCount();
-      return L.divIcon({
-        html: "<div><span>" + count + "</span></div>",
-        className: "meshcore-cluster-icon",
-        iconSize: L.point(40, 40),
-      });
-    }
-
     function ensureMap() {
-      if (leafletMap || !window.L) return;
-      leafletMap = L.map("map", {
-        worldCopyJump: true,
-        zoomControl: true,
-        dragging: true,
-        scrollWheelZoom: true,
-        doubleClickZoom: true,
-        boxZoom: true,
-        keyboard: true,
-        tap: true,
-        touchZoom: true,
-      }).setView([54, 12], 4);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-      }).addTo(leafletMap);
-      markerLayer = window.L.markerClusterGroup
-        ? L.markerClusterGroup({
-            disableClusteringAtZoom: 12,
-            chunkedLoading: true,
-            iconCreateFunction: clusterIcon,
-          }).addTo(leafletMap)
-        : L.layerGroup().addTo(leafletMap);
+      if (maplibreMap || !window.maplibregl) return;
+      maplibreMap = new maplibregl.Map({
+        container: "map",
+        center: [12, 54],
+        zoom: 4,
+        maxPitch: 85,
+        maxZoom: 18,
+        renderWorldCopies: true,
+        style: "https://tiles.openfreemap.org/styles/liberty",
+      });
+      maplibreMap.addControl(new maplibregl.NavigationControl({
+        visualizePitch: true,
+        showZoom: true,
+        showCompass: true,
+      }), "top-right");
+      maplibreMap.once("style.load", () => {
+        mapStyleLoaded = true;
+        void renderMap(latestMapAdverts);
+      });
+      maplibreMap.once("load", () => {
+        ensure3DMapStyle();
+      });
+    }
+
+    function ensure3DMapStyle() {
+      if (!maplibreMap || !maplibreMap.isStyleLoaded()) return;
+      if (!maplibreMap.getSource(MAP_TERRAIN_SOURCE_ID)) {
+        maplibreMap.addSource(MAP_TERRAIN_SOURCE_ID, {
+          type: "raster-dem",
+          url: "https://tiles.mapterhorn.com/tilejson.json",
+        });
+      }
+      if (!maplibreMap.getSource(MAP_HILLSHADE_SOURCE_ID)) {
+        maplibreMap.addSource(MAP_HILLSHADE_SOURCE_ID, {
+          type: "raster-dem",
+          url: "https://tiles.mapterhorn.com/tilejson.json",
+        });
+      }
+      if (!maplibreMap.getLayer(MAP_HILLSHADE_LAYER_ID)) {
+        const hillshadeBeforeLayer = maplibreMap.getLayer("building") ? "building" : undefined;
+        maplibreMap.addLayer({
+          id: MAP_HILLSHADE_LAYER_ID,
+          type: "hillshade",
+          source: MAP_HILLSHADE_SOURCE_ID,
+          layout: { visibility: "visible" },
+          paint: {
+            "hillshade-shadow-color": "#473B24",
+            "hillshade-highlight-color": "#f3ead8",
+            "hillshade-accent-color": "#6f7f8e",
+          },
+        }, hillshadeBeforeLayer);
+      }
+      if (maplibreMap.getLayer("building-3d")) {
+        maplibreMap.setLayerZoomRange("building-3d", 13, 24);
+        maplibreMap.setPaintProperty("building-3d", "fill-extrusion-height", [
+          "to-number",
+          ["coalesce", ["get", "render_height"], ["get", "height"]],
+          12,
+        ]);
+        maplibreMap.setPaintProperty("building-3d", "fill-extrusion-base", [
+          "to-number",
+          ["coalesce", ["get", "render_min_height"], ["get", "min_height"]],
+          0,
+        ]);
+        maplibreMap.setPaintProperty("building-3d", "fill-extrusion-opacity", 0.72);
+      }
+      maplibreMap.setTerrain({
+        source: MAP_TERRAIN_SOURCE_ID,
+        exaggeration: 1.25,
+      });
+      if (!terrainControlAdded) {
+        maplibreMap.addControl(new maplibregl.TerrainControl({
+          source: MAP_TERRAIN_SOURCE_ID,
+          exaggeration: 1.25,
+        }), "top-right");
+        terrainControlAdded = true;
+      }
+      maplibreMap.setSky({});
     }
 
     function markerKey(advert) {
@@ -595,79 +641,193 @@ const DASHBOARD_HTML = `<!doctype html>
         '<br>' + advert.lat.toFixed(5) + ', ' + advert.lon.toFixed(5);
     }
 
-    function updateMarker(marker, advert) {
-      marker.options.dashboardAdvert = advert;
-      marker.setLatLng([advert.lat, advert.lon]);
-      marker.setIcon(markerIcon(advert));
-      marker.options.title = advert.nodeName || advert.nodeKey || "unknown";
-      if (marker.getTooltip()) {
-        marker.setTooltipContent(markerTooltip(advert));
-      } else {
-        marker.bindTooltip(markerTooltip(advert), { permanent: false, direction: "top", opacity: 0.95 });
-      }
+    function mapImageId(nodeType) {
+      return "meshcore-node-type-" + nodeType;
     }
 
-    function createMarker(advert) {
-      const marker = L.marker([advert.lat, advert.lon], {
-        icon: markerIcon(advert),
-        title: advert.nodeName || advert.nodeKey || "unknown",
-        dashboardAdvert: advert,
-        interactive: true,
-      });
-      marker.bindTooltip(markerTooltip(advert), { permanent: false, direction: "top", opacity: 0.95 });
-      marker.on("click", () => {
-        const current = marker.options.dashboardAdvert || advert;
-        showDetail("Marker: " + (current.nodeName || current.nodeKey || "unknown"), resolveDetail(current.requestKey) || current);
-      });
-      marker.addTo(markerLayer);
-      return marker;
+    const iconCache = {};
+    for (let i = 1; i <= 3; i++) {
+      const img = new Image();
+      img.src = NODE_TYPE_ICON_DATA_URLS[i];
+      iconCache[i] = img;
     }
 
-    function renderMap(adverts) {
+    async function loadMapIcons() {
+      await Promise.all([1, 2, 3].map((nodeType) => {
+        const id = mapImageId(nodeType);
+        if (maplibreMap.hasImage(id)) return;
+        const img = iconCache[nodeType];
+        if (img.complete && img.naturalWidth > 0) {
+          maplibreMap.addImage(id, img, { pixelRatio: 2 });
+          return;
+        }
+        return new Promise((resolve, reject) => {
+          img.onload = () => { maplibreMap.addImage(id, img, { pixelRatio: 2 }); resolve(); };
+          img.onerror = reject;
+        });
+      }));
+    }
+
+    function markerFeature(advert) {
+      const key = markerKey(advert);
+      const nodeType = advertNodeType(advert.advertType);
+      markerRecords.set(key, advert);
+      return {
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [advert.lon, advert.lat],
+        },
+        properties: {
+          key,
+          requestKey: advert.requestKey || "",
+          title: advert.nodeName || advert.nodeKey || "unknown",
+          icon: mapImageId(nodeType),
+          tooltip: markerTooltip(advert),
+        },
+      };
+    }
+
+    async function ensureMapLayers() {
+      if (!maplibreMap || !mapStyleLoaded) return false;
+      if (mapLayersReady) return true;
+      if (mapLayerSetupPromise) return mapLayerSetupPromise;
+
+      mapLayerSetupPromise = (async () => {
+        await loadMapIcons();
+        if (!maplibreMap.getSource(MAP_ADVERT_SOURCE_ID)) {
+          maplibreMap.addSource(MAP_ADVERT_SOURCE_ID, {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+        }
+        if (!maplibreMap.getLayer(MAP_ADVERT_HIT_LAYER_ID)) {
+          maplibreMap.addLayer({
+            id: MAP_ADVERT_HIT_LAYER_ID,
+            type: "circle",
+            source: MAP_ADVERT_SOURCE_ID,
+            paint: {
+              "circle-radius": 24,
+              "circle-color": MAP_ICON_COLOR,
+              "circle-opacity": 0.01,
+            },
+          });
+        }
+        if (!maplibreMap.getLayer(MAP_ADVERT_DOT_LAYER_ID)) {
+          maplibreMap.addLayer({
+            id: MAP_ADVERT_DOT_LAYER_ID,
+            type: "circle",
+            source: MAP_ADVERT_SOURCE_ID,
+            paint: {
+              "circle-radius": 9,
+              "circle-color": MAP_ICON_COLOR,
+              "circle-opacity": 0.95,
+              "circle-stroke-color": "#0f2b1e",
+              "circle-stroke-width": 2,
+            },
+          });
+        }
+        if (!maplibreMap.getLayer(MAP_ADVERT_LAYER_ID)) {
+          maplibreMap.addLayer({
+            id: MAP_ADVERT_LAYER_ID,
+            type: "symbol",
+            source: MAP_ADVERT_SOURCE_ID,
+            layout: {
+              "icon-image": ["get", "icon"],
+              "icon-size": 0.125,
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+              "icon-pitch-alignment": "viewport",
+              "icon-rotation-alignment": "viewport",
+              "icon-anchor": "center",
+            },
+            paint: {
+              "icon-opacity": 1,
+            },
+          });
+        }
+        maplibreMap.on("click", MAP_ADVERT_HIT_LAYER_ID, (event) => {
+          if (currentPopup) {
+            currentPopup.remove();
+            currentPopup = null;
+          }
+          const feature = event.features?.[0];
+          const key = feature?.properties?.key;
+          const current = markerRecords.get(key);
+          if (!current) return;
+          showDetail("Marker: " + (current.nodeName || current.nodeKey || "unknown"), resolveDetail(current.requestKey) || current);
+        });
+        maplibreMap.on("mouseenter", MAP_ADVERT_HIT_LAYER_ID, (event) => {
+          if (currentPopup) {
+            currentPopup.remove();
+            currentPopup = null;
+          }
+          maplibreMap.getCanvas().style.cursor = "pointer";
+          const feature = event.features?.[0];
+          const coordinates = feature?.geometry?.coordinates;
+          if (!coordinates) return;
+          currentPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: true, offset: 20, className: "meshcore-popup" })
+            .setLngLat(coordinates)
+            .setHTML(feature.properties?.tooltip || "")
+            .addTo(maplibreMap);
+        });
+        maplibreMap.on("mouseleave", MAP_ADVERT_HIT_LAYER_ID, () => {
+          maplibreMap.getCanvas().style.cursor = "";
+          if (currentPopup) {
+            currentPopup.remove();
+            currentPopup = null;
+          }
+        });
+        mapLayersReady = true;
+        return true;
+      })();
+      mapLayerSetupPromise = mapLayerSetupPromise.catch((error) => {
+        mapLayerSetupPromise = null;
+        throw error;
+      });
+      return mapLayerSetupPromise;
+    }
+
+    async function renderMap(adverts) {
+      if (pendingRender) return;
+      pendingRender = (async () => {
+      latestMapAdverts = adverts || [];
       ensureMap();
-      if (!leafletMap || !markerLayer) {
+      if (!maplibreMap) {
         document.getElementById("map").textContent = "Map library could not be loaded.";
         return;
       }
+      if (!await ensureMapLayers()) return;
 
       const nextKeys = new Set();
-      const bounds = [];
-      for (const advert of adverts) {
+      const bounds = new maplibregl.LngLatBounds();
+      const features = [];
+      for (const advert of latestMapAdverts) {
         const key = markerKey(advert);
-        const nextFingerprint = markerFingerprint(advert);
-        const existing = markerRecords.get(key);
         nextKeys.add(key);
-        bounds.push([advert.lat, advert.lon]);
-
-        if (existing) {
-          if (existing.fingerprint !== nextFingerprint) {
-            updateMarker(existing.marker, advert);
-            existing.fingerprint = nextFingerprint;
-            markerLayer.refreshClusters?.(existing.marker);
-          }
-          continue;
-        }
-
-        markerRecords.set(key, {
-          marker: createMarker(advert),
-          fingerprint: nextFingerprint,
-        });
+        bounds.extend([advert.lon, advert.lat]);
+        features.push(markerFeature(advert));
       }
 
-      for (const [key, record] of markerRecords) {
+      for (const key of markerRecords.keys()) {
         if (!nextKeys.has(key)) {
-          markerLayer.removeLayer(record.marker);
           markerRecords.delete(key);
         }
       }
 
-      if (bounds.length > 0 && state.mapFirstRender) {
-        leafletMap.fitBounds(bounds, { padding: [38, 38], maxZoom: 13 });
+      const source = maplibreMap.getSource(MAP_ADVERT_SOURCE_ID);
+      source?.setData({ type: "FeatureCollection", features });
+
+      if (!bounds.isEmpty() && state.mapFirstRender) {
+        maplibreMap.fitBounds(bounds, { padding: 38, maxZoom: 13 });
         state.mapFirstRender = false;
-      } else if (bounds.length === 0) {
-        leafletMap.setView([54, 12], 4);
+      } else if (bounds.isEmpty()) {
+        maplibreMap.jumpTo({ center: [12, 54], zoom: 4 });
       }
-      setTimeout(() => leafletMap.invalidateSize(), 0);
+      setTimeout(() => maplibreMap.resize(), 0);
+      })();
+      await pendingRender;
+      pendingRender = null;
     }
 
     function renderWorkers(workers) {

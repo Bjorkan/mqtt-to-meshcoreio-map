@@ -54,28 +54,46 @@ test("dashboard serves HTML at root and index", async () => {
       assert.equal(response.status, 200);
       assert.match(response.headers.get("content-type") ?? "", /text\/html/);
       assert.match(body, /MQTT to Meshcore\.io Map Dashboard/);
-      assert.match(body, /leaflet\.markercluster@1\.5\.3/);
-      assert.match(body, /disableClusteringAtZoom: 12/);
-      assert.match(body, /chunkedLoading: true/);
+      assert.match(body, /maplibre-gl@5\.5\.0/);
+      assert.match(body, /new maplibregl\.Map/);
+      assert.match(body, /new maplibregl\.NavigationControl/);
+      assert.match(body, /new maplibregl\.TerrainControl/);
+      assert.match(body, /https:\/\/tiles\.openfreemap\.org\/styles\/liberty/);
+      assert.match(body, /https:\/\/tiles\.mapterhorn\.com\/tilejson\.json/);
+      assert.match(body, /maxPitch: 85/);
+      assert.match(body, /maplibreMap\.once\("style\.load"/);
+      assert.match(body, /maplibreMap\.setTerrain/);
+      assert.match(body, /maplibreMap\.setSky/);
+      assert.match(body, /building-3d/);
+      assert.match(body, /fill-extrusion-height/);
+      assert.match(body, /fill-extrusion-opacity", 0\.72/);
       assert.match(body, /function advertNodeType/);
       assert.match(body, /normalized === "REPEATER"\) return 2/);
       assert.match(body, /normalized === "ROOM"\) return 3/);
-      assert.match(body, /meshcore-cluster-icon/);
-      assert.match(body, /meshcore-node-icon/);
-      // Vendored SVG icons loaded from local repository assets
+      assert.match(body, /MAP_ADVERT_SOURCE_ID = "meshcore-adverts"/);
+      assert.match(body, /MAP_ADVERT_LAYER_ID = "meshcore-advert-icons"/);
+      assert.match(body, /MAP_ADVERT_DOT_LAYER_ID = "meshcore-advert-dots"/);
+      assert.match(body, /MAP_ADVERT_HIT_LAYER_ID = "meshcore-advert-hit-area"/);
+      // Vendored SVG icons are pre-loaded as Image objects from inline base64 data URLs.
       assert.match(body, /NODE_TYPE_SVG_TEMPLATES/);
-      assert.match(body, /function nodeTypeSvg/);
       // Templates for all three node types include the fill placeholder for runtime tinting
       assert.ok(body.split('__NODE_TYPE_FILL__').length - 1 >= 3, 'all three node type templates have fill placeholder');
-      // Map markers use the official map's update-recent green filter over the official base icon colour.
-      assert.match(body, /saturate\(5\) hue-rotate\(260deg\)/);
-      assert.match(body, /#667b89/);
+      assert.match(body, /const iconCache = \{\};/);
+      assert.match(body, /function loadMapIcons/);
+      assert.match(body, /maplibreMap\.addImage\(id, img, \{ pixelRatio: 2 \}\)/);
+      assert.match(body, /NODE_TYPE_ICON_DATA_URLS/);
+      assert.match(body, /function mapImageId/);
+      assert.match(body, /MAP_ICON_COLOR = "#61d394"/);
       assert.doesNotMatch(body, /function clusterStatus/);
       assert.doesNotMatch(body, /function markerStatus/);
       assert.doesNotMatch(body, /STATUS_COLORS/);
       // Old CSS-dot approach must not be present
       assert.doesNotMatch(body, /meshcore-node-dot/);
-      assert.match(body, /\.leaflet-top, \.leaflet-bottom \{ z-index: 900; \}/);
+      assert.doesNotMatch(body, /leaflet/);
+      assert.doesNotMatch(body, /markercluster/);
+      assert.doesNotMatch(body, /meshcore-cluster-icon/);
+      assert.doesNotMatch(body, /new maplibregl\.Marker/);
+      assert.match(body, /\.maplibregl-ctrl-top-right, \.maplibregl-ctrl-bottom-right, \.maplibregl-ctrl-bottom-left \{ z-index: 900; \}/);
       assert.match(body, /--ok: #61d394/);
       assert.match(body, /--warn: #f4c95d/);
       assert.match(body, /--error: #ff6b6b/);
@@ -91,7 +109,15 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /if \(advert\.nodeKey\) return "node-key\|" \+ advert\.nodeKey;/);
       assert.match(body, /Number\(advert\.lat\)\.toFixed\(5\)/);
       assert.match(body, /Number\(advert\.lon\)\.toFixed\(5\)/);
-      assert.match(body, /marker\.bindTooltip/);
+      assert.match(body, /new maplibregl\.Popup/);
+      assert.match(body, /new maplibregl\.LngLatBounds/);
+      assert.match(body, /type: "symbol"/);
+      assert.match(body, /type: "circle"/);
+      assert.match(body, /"circle-opacity": 0\.95/);
+      assert.match(body, /"icon-image": \["get", "icon"\]/);
+      assert.match(body, /"icon-pitch-alignment": "viewport"/);
+      assert.match(body, /"icon-rotation-alignment": "viewport"/);
+      assert.match(body, /source\?\.setData\(\{ type: "FeatureCollection", features \}\)/);
       assert.match(body, /showDetail\("Marker: "/);
       assert.match(body, /function scheduleRefresh\(delay\)/);
       assert.match(body, /window\.setTimeout\(runRefreshLoop, delay\)/);
@@ -106,6 +132,7 @@ test("dashboard serves HTML at root and index", async () => {
       assert.doesNotMatch(body, /role="img"/);
       assert.doesNotMatch(body, /tabindex="0"/);
       assert.doesNotMatch(body, /marker\.bindPopup/);
+      assert.doesNotMatch(body, /marker\.bindTooltip/);
       assert.doesNotMatch(body, /setInterval\(/);
       assert.doesNotMatch(body, /table\.node-info/);
     }
@@ -327,6 +354,30 @@ test("dashboard map API keeps only the latest NODES_INSERTED advert per public k
   } finally {
     await server.close();
   }
+});
+
+test("dashboard map icon rendering uses SVGs with correct size and color", async () => {
+  await withServer(async (url) => {
+    const response = await fetch(`${url}/`);
+    const body = await response.text();
+
+    assert.match(body, /MAP_ICON_COLOR = "#61d394"/);
+    assert.match(body, /const iconCache = \{\};/);
+    assert.match(body, /NODE_TYPE_ICON_DATA_URLS/);
+    assert.match(body, /maplibreMap\.addImage\(id, img, \{ pixelRatio: 2 \}\)/);
+    assert.match(body, /"icon-size": 0\.125/);
+    assert.match(body, /"circle-radius": 24,/);
+    assert.match(body, /"circle-color": MAP_ICON_COLOR,/);
+    assert.match(body, /currentPopup/);
+    assert.match(body, /closeOnClick: true/);
+    assert.match(body, /className: "meshcore-popup"/);
+    assert.match(body, /\.maplibregl-popup\.meshcore-popup/);
+    assert.doesNotMatch(body, /drawRepeaterIcon/);
+    assert.doesNotMatch(body, /fillRoundedRect/);
+    assert.doesNotMatch(body, /drawRoomIcon/);
+    assert.doesNotMatch(body, /drawSensorIcon/);
+    assert.doesNotMatch(body, /context\.getImageData\(/);
+  });
 });
 
 test("dashboard health check returns ok", async () => {
