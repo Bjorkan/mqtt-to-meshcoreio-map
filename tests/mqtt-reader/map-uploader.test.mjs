@@ -333,7 +333,7 @@ test('replaces previous observer radio params when a newer valid status arrives'
   });
 });
 
-test('drops observer radio status after one hour without a new valid status', async () => {
+test('drops observer radio status after 24 hours without a new valid status', async () => {
   const { fetch, requests } = makeFetch();
   let now = 1_000_000;
   const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
@@ -342,7 +342,7 @@ test('drops observer radio status after one hour without a new valid status', as
   }));
 
   await rememberDefaultStatus(uploader);
-  now += 60 * 60 * 1000 + 1;
+  now += 24 * 60 * 60 * 1000 + 1;
 
   await uploader.processMqttMessage(
     `meshcore/STO/${OBSERVER_ID}/status`,
@@ -398,7 +398,7 @@ test('loads persisted observer radio status from Turso after restart', async () 
   }
 });
 
-test('removes persisted observer radio status older than one hour', async () => {
+test('removes persisted observer radio status older than 24 hours', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'mqtt-to-map-observers-'));
   const dbPath = join(directory, 'mqtt-to-meshcoreio-map.turso');
 
@@ -418,7 +418,7 @@ test('removes persisted observer radio status older than one hour', async () => 
     const secondUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
       fetch: makeFetch().fetch,
       observerStatusStore: secondStore,
-      now: () => 1_000_000 + 60 * 60 * 1000 + 1,
+      now: () => 1_000_000 + 24 * 60 * 60 * 1000 + 1,
     }));
     await secondUploader.ready;
 

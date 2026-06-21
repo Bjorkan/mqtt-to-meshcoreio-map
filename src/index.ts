@@ -9,6 +9,7 @@ import {
 } from "./map-uploader.js";
 import { TursoPersistenceStore, type PersistenceStore } from "./persistence-store.js";
 import type { MapUploadWorkRequest } from "./map-types.js";
+import { fetchSuggestedRadioPresets } from "./suggested-radio-presets.js";
 
 const DEFAULT_TURSO_PATH = "/data/mqtt-to-meshcoreio-map.turso";
 
@@ -272,6 +273,7 @@ export function startRuntime(
 ): Runtime {
   const dashboardConfig = config.dashboard ?? { enabled: false, port: 80 };
   const meshcoreDashboardStore = dependencies.mapUploader ? undefined : openPersistenceStore(config.tursoPath);
+  fetchSuggestedRadioPresets();
   const dashboardState = dashboardConfig.enabled
     ? new DashboardState({ meshcoreHistoryStore: meshcoreDashboardStore })
     : undefined;

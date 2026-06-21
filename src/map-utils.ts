@@ -14,7 +14,7 @@ const MAX_MQTT_PAYLOAD_BYTES = 16 * 1024;
 const MAX_PACKET_HEX_CHARS = 1024;
 
 export const UPLOADABLE_ADVERT_TYPES = new Set(["REPEATER", "ROOM", "SENSOR"]);
-export const OBSERVER_TTL_MS = 60 * 60 * 1000;
+export const OBSERVER_TTL_MS = 24 * 60 * 60 * 1000;
 export const SEEN_ADVERT_TTL_SECONDS = 72 * 60 * 60;
 export const DROP_LOG_SUPPRESS_MS = 60 * 1000;
 export const UPLOAD_RETRY_DELAY_MS = 5 * 1000;

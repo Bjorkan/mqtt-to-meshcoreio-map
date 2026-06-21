@@ -8,6 +8,7 @@ import type {
   DashboardState,
   DashboardWorkerSnapshot,
 } from "./dashboard-state.js";
+import { matchPresetTitle } from "../suggested-radio-presets.js";
 
 const DASHBOARD_POLL_INTERVAL_MS = 5000;
 const DASHBOARD_ASSETS_DIR = fileURLToPath(new URL("./assets/node_types/", import.meta.url));
@@ -330,7 +331,7 @@ const DASHBOARD_HTML = `<!doctype html>
     <div class="stats">
       <div class="stat"><strong id="stat-queue">0</strong><span>Queued to be pushed to Meshcore.io</span></div>
       <div class="stat"><strong id="stat-workers">0</strong><span>workers</span></div>
-      <div class="stat"><strong id="stat-adverts">0</strong><span>accepted adverts with coordinates, last 24h</span></div>
+      <div class="stat"><strong id="stat-adverts">0</strong><span>accepted adverts with coordinates, last 7 days</span></div>
     </div>
     <div class="panels">
       <section>
@@ -353,7 +354,7 @@ const DASHBOARD_HTML = `<!doctype html>
         <h2>Advert accepted by Meshcore.io</h2>
         <button class="icon-button" id="map-fullscreen" type="button" title="Fullscreen map">Fullscreen</button>
       </div>
-      <div class="map" id="map" aria-label="Accepted advert locations from the last 24 hours"></div>
+      <div class="map" id="map" aria-label="Accepted advert locations from the last 7 days"></div>
     </section>
   </main>
   <dialog id="detail-dialog">
@@ -498,7 +499,7 @@ const DASHBOARD_HTML = `<!doctype html>
           if (item.job?.requestKey === requestId) return item;
         }
       }
-      for (const advert of state.dashboard.map.advertsLast24Hours || []) {
+      for (const advert of state.dashboard.map.advertsLast7Days || []) {
         if (advert.requestKey === requestId) return advert;
       }
       return null;
@@ -507,7 +508,7 @@ const DASHBOARD_HTML = `<!doctype html>
     function renderStats(snapshot) {
       setTextIfChanged("stat-queue", String((snapshot.queue.items || []).length));
       setTextIfChanged("stat-workers", String((snapshot.worker.workers || []).length));
-      setTextIfChanged("stat-adverts", String((snapshot.map.advertsLast24Hours || []).length));
+      setTextIfChanged("stat-adverts", String((snapshot.map.advertsLast7Days || []).length));
       setTextIfChanged("updated", "Updated " + formatTime(snapshot.generatedAt));
     }
 
@@ -566,6 +567,7 @@ const DASHBOARD_HTML = `<!doctype html>
         nodePublicKey: advert.nodePublicKey,
         lat: advert.lat,
         lon: advert.lon,
+        presetTitle: advert.presetTitle,
       });
     }
 
@@ -573,8 +575,10 @@ const DASHBOARD_HTML = `<!doctype html>
       const name = escapeText(advert.nodeName || advert.nodeKey || "unknown");
       const request = escapeText(advert.requestKey || "no request");
       const detail = escapeText(advert.statusDetail || "");
+      const preset = advert.presetTitle ? escapeText(advert.presetTitle) : "";
       return '<strong>' + name + '</strong><br>request ' + request + '<br>' +
         escapeText(advert.status || "pending") + (detail ? '<br>' + detail : '') +
+        (preset ? '<br><em>Preset: ' + preset + '</em>' : '') +
         '<br>' + advert.lat.toFixed(5) + ', ' + advert.lon.toFixed(5);
     }
 
@@ -781,7 +785,8 @@ const DASHBOARD_HTML = `<!doctype html>
         target.innerHTML = (workers || []).map((worker, index) => {
           const job = worker.currentJob;
           const label = job ? escapeText(job.nodeName + " / " + job.requestKey + " / " + job.nodeKey) : "No active job";
-          return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>Worker ' + escapeText(worker.workerKey) + '</strong><span class="pill ' + pillClass(worker.state) + '">' + escapeText(worker.state) + '</span></div><div class="muted">' + label + '</div></button>';
+          const preset = job?.presetTitle ? escapeText(job.presetTitle) : "";
+          return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>Worker ' + escapeText(worker.workerKey) + '</strong><span class="pill ' + pillClass(worker.state) + '">' + escapeText(worker.state) + '</span></div><div class="muted">' + label + '</div>' + (preset ? '<div class="muted" style="margin-top:2px">Preset: ' + preset + '</div>' : '') + '</button>';
         }).join("") || '<div class="muted">No workers configured.</div>';
         target.querySelectorAll("button").forEach((button) => {
           button.addEventListener("click", () => {
@@ -805,7 +810,8 @@ const DASHBOARD_HTML = `<!doctype html>
       renderWhenChanged("queue", items, target, () => {
         target.innerHTML = (queue || []).map((item, index) => {
           const job = item.job;
-          return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">request ' + escapeText(job.requestKey) + ' / ' + escapeText(job.advertType) + ' ' + escapeText(job.nodeKey) + '</div></button>';
+          const preset = job?.presetTitle ? escapeText(job.presetTitle) : "";
+          return '<button class="item" type="button" data-index="' + index + '"><div class="row"><strong>' + escapeText(job.nodeName) + '</strong><span class="pill ' + pillClass(item.state) + '">' + escapeText(item.state) + '</span></div><div class="muted">request ' + escapeText(job.requestKey) + ' / ' + escapeText(job.advertType) + ' ' + escapeText(job.nodeKey) + '</div>' + (preset ? '<div class="muted" style="margin-top:2px">Preset: ' + preset + '</div>' : '') + '</button>';
         }).join("") || '<div class="muted">Queue is empty.</div>';
         target.querySelectorAll("button").forEach((button) => {
           button.addEventListener("click", () => {
@@ -831,19 +837,20 @@ const DASHBOARD_HTML = `<!doctype html>
           target.innerHTML = '<div class="muted" style="text-align:center;padding:20px">No completed adverts yet.</div>';
           return;
         }
-        target.innerHTML = history.map((item, index) => {
-          const job = item.job;
-          const name = escapeText(job.nodeName || job.nodeKey || "unknown");
-          const type = escapeText(job.advertType);
-          const rid = escapeText(job.requestKey || "");
-          const status = escapeText(item.state);
-          const resp = item.responseSummary ? escapeText(item.responseSummary) : "";
-          return '<button class="item" type="button" data-index="' + index + '">' +
-            '<div class="row"><strong>' + name + '</strong><span class="pill ' + pillClass(item.state) + '">' + status + '</span></div>' +
-            '<div class="row"><span class="muted">' + formatTime(item.updatedAt) + ' · ' + type + '</span><span class="pill">' + rid + '</span></div>' +
-            (resp ? '<div class="row muted" style="margin-top:4px">Response: ' + resp + '</div>' : '') +
-            '</button>';
-        }).join("");
+          target.innerHTML = history.map((item, index) => {
+            const job = item.job;
+            const name = escapeText(job.nodeName || job.nodeKey || "unknown");
+            const type = escapeText(job.advertType);
+            const rid = escapeText(job.requestKey || "");
+            const status = escapeText(item.state);
+            const resp = item.responseSummary ? escapeText(item.responseSummary) : "";
+            const preset = job?.presetTitle ? escapeText(job.presetTitle) : "";
+            return '<button class="item" type="button" data-index="' + index + '">' +
+              '<div class="row"><strong>' + name + '</strong><span class="pill ' + pillClass(item.state) + '">' + status + '</span></div>' +
+              '<div class="row"><span class="muted">' + formatTime(item.updatedAt) + ' · ' + type + (preset ? ' · Preset: ' + preset : '') + '</span><span class="pill">' + rid + '</span></div>' +
+              (resp ? '<div class="row muted" style="margin-top:4px">Response: ' + resp + '</div>' : '') +
+              '</button>';
+          }).join("");
         target.querySelectorAll("button").forEach((button) => {
           button.addEventListener("click", () => {
             const item = history[Number(button.dataset.index)];
@@ -866,7 +873,7 @@ const DASHBOARD_HTML = `<!doctype html>
       state.dashboard = snapshot;
       clearRefreshError();
       renderStats(snapshot);
-      const adverts = snapshot.map.advertsLast24Hours || [];
+      const adverts = snapshot.map.advertsLast7Days || [];
       const mapSignature = adverts.map((advert) => markerKey(advert) + "|" + markerFingerprint(advert)).join("\\n");
       renderWhenChanged("map", adverts, document.getElementById("map"), () => renderMap(adverts), mapSignature);
       renderWorkers(snapshot.worker.workers || []);
@@ -952,6 +959,7 @@ function jobPayload(item: DashboardQueueItem): unknown {
     nodeKey: shortNodeKey(item.job.nodePublicKey),
     nodePublicKey: item.job.nodePublicKey,
     radioParams: item.job.radioParams,
+    presetTitle: matchPresetTitle(item.job.radioParams),
   };
 }
 
@@ -975,6 +983,7 @@ function workerPayload(worker: DashboardWorkerSnapshot): unknown {
           nodeKey: shortNodeKey(worker.currentJob.nodePublicKey),
           nodePublicKey: worker.currentJob.nodePublicKey,
           radioParams: worker.currentJob.radioParams,
+          presetTitle: matchPresetTitle(worker.currentJob.radioParams),
         }
       : undefined,
   };
@@ -991,6 +1000,7 @@ function advertPayload(advert: DashboardAdvertLocation): unknown {
     nodePublicKey: advert.nodePublicKey,
     lat: advert.lat,
     lon: advert.lon,
+    presetTitle: advert.presetTitle,
   };
 }
 
@@ -1033,7 +1043,7 @@ function dashboardPayload(state: DashboardState): unknown {
       workers: snapshot.workers.map(workerPayload),
     },
     map: {
-      advertsLast24Hours: mapAdvertPayloads(snapshot.advertsLast24Hours),
+      advertsLast7Days: mapAdvertPayloads(snapshot.advertsLast7Days),
     },
   };
 }

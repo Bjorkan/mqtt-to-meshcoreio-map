@@ -88,10 +88,10 @@ test("queueHandled leaves advert visible as accepted while archiving queue item"
   assert.equal(snapshot.queueHistory[0].state, "handled");
   assert.equal(snapshot.queueHistory[0].responseFromMeshcoreIO, '{"code":"NODES_INSERTED"}');
 
-  assert.equal(snapshot.advertsLast24Hours.length, 1);
-  assert.equal(snapshot.advertsLast24Hours[0].requestId, job.requestId);
-  assert.equal(snapshot.advertsLast24Hours[0].status, "accepted");
-  assert.equal(snapshot.advertsLast24Hours[0].responseFromMeshcoreIO, '{"code":"NODES_INSERTED"}');
+  assert.equal(      snapshot.advertsLast7Days.length, 1);
+  assert.equal(      snapshot.advertsLast7Days[0].requestId, job.requestId);
+  assert.equal(      snapshot.advertsLast7Days[0].status, "accepted");
+  assert.equal(      snapshot.advertsLast7Days[0].responseFromMeshcoreIO, '{"code":"NODES_INSERTED"}');
 });
 
 test("queueHandled persists MeshCore.io history with any server response and reloads it after restart", async () => {
@@ -114,9 +114,9 @@ test("queueHandled persists MeshCore.io history with any server response and rel
   assert.equal(snapshot.queueHistory.length, 1);
   assert.equal(snapshot.queueHistory[0].job.requestId, job.requestId);
   assert.equal(snapshot.queueHistory[0].responseFromMeshcoreIO, '{"code":"ERR_ADVERT_DUPLICATE"}');
-  assert.equal(snapshot.advertsLast24Hours.length, 1);
-  assert.equal(snapshot.advertsLast24Hours[0].requestId, job.requestId);
-  assert.equal(snapshot.advertsLast24Hours[0].responseFromMeshcoreIO, '{"code":"ERR_ADVERT_DUPLICATE"}');
+  assert.equal(      snapshot.advertsLast7Days.length, 1);
+  assert.equal(      snapshot.advertsLast7Days[0].requestId, job.requestId);
+  assert.equal(      snapshot.advertsLast7Days[0].responseFromMeshcoreIO, '{"code":"ERR_ADVERT_DUPLICATE"}');
 });
 
 test("queueHandled does not persist MeshCore.io history until a server response exists", () => {
@@ -147,13 +147,13 @@ test("queueDropped leaves advert visible as rejected while archiving queue item"
   assert.equal(snapshot.queueHistory[0].state, "dropped");
   assert.equal(snapshot.queueHistory[0].detail, "Upload queue is full.");
 
-  assert.equal(snapshot.advertsLast24Hours.length, 1);
-  assert.equal(snapshot.advertsLast24Hours[0].requestId, job.requestId);
-  assert.equal(snapshot.advertsLast24Hours[0].status, "rejected");
-  assert.equal(snapshot.advertsLast24Hours[0].statusDetail, "Upload queue is full.");
+  assert.equal(      snapshot.advertsLast7Days.length, 1);
+  assert.equal(      snapshot.advertsLast7Days[0].requestId, job.requestId);
+  assert.equal(      snapshot.advertsLast7Days[0].status, "rejected");
+  assert.equal(      snapshot.advertsLast7Days[0].statusDetail, "Upload queue is full.");
 });
 
-test("snapshot keeps accepted and rejected adverts for the same node inside the 24-hour window", () => {
+test("snapshot keeps accepted and rejected adverts for the same node inside the 7-day window", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
   const nodePublicKey = "b".repeat(64);
@@ -169,14 +169,14 @@ test("snapshot keeps accepted and rejected adverts for the same node inside the 
 
   const snapshot = state.snapshot();
 
-  assert.equal(snapshot.advertsLast24Hours.length, 2);
+  assert.equal(      snapshot.advertsLast7Days.length, 2);
   assert.deepEqual(
-    snapshot.advertsLast24Hours.map((advert) => [advert.requestId, advert.status]),
+          snapshot.advertsLast7Days.map((advert) => [advert.requestId, advert.status]),
     [["older-accepted", "accepted"], ["newer-rejected", "rejected"]]
   );
 });
 
-test("snapshot keeps accepted and pending adverts for the same node inside the 24-hour window", () => {
+test("snapshot keeps accepted and pending adverts for the same node inside the 7-day window", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
   const nodePublicKey = "c".repeat(64);
@@ -191,9 +191,9 @@ test("snapshot keeps accepted and pending adverts for the same node inside the 2
 
   const snapshot = state.snapshot();
 
-  assert.equal(snapshot.advertsLast24Hours.length, 2);
+  assert.equal(      snapshot.advertsLast7Days.length, 2);
   assert.deepEqual(
-    snapshot.advertsLast24Hours.map((advert) => [advert.requestId, advert.status]),
+          snapshot.advertsLast7Days.map((advert) => [advert.requestId, advert.status]),
     [["older-accepted", "accepted"], ["newer-pending", "pending"]]
   );
 });
@@ -211,23 +211,23 @@ test("snapshot keeps same-time adverts for the same node", () => {
 
   const snapshot = state.snapshot();
 
-  assert.equal(snapshot.advertsLast24Hours.length, 2);
+  assert.equal(      snapshot.advertsLast7Days.length, 2);
   assert.deepEqual(
-    snapshot.advertsLast24Hours.map((advert) => advert.requestId),
+          snapshot.advertsLast7Days.map((advert) => advert.requestId),
     ["request-a-loser", "request-z-winner"]
   );
 });
 
-test("advert locations expire after the 24-hour window", () => {
+test("advert locations expire after the 7-day window", () => {
   const clock = makeClock();
   const state = new DashboardState({ now: clock.now });
   const job = makeJob();
 
   recordLocation(state, job);
-  assert.equal(state.snapshot().advertsLast24Hours.length, 1);
+  assert.equal(state.snapshot().advertsLast7Days.length, 1);
 
-  clock.advance(24 * 60 * 60 * 1000 + 1);
-  assert.equal(state.snapshot().advertsLast24Hours.length, 0);
+  clock.advance(7 * 24 * 60 * 60 * 1000 + 1);
+  assert.equal(state.snapshot().advertsLast7Days.length, 0);
 });
 
 test("dashboard logs are capped at the newest 500 entries", () => {

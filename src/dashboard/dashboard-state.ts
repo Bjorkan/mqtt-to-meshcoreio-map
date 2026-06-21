@@ -3,7 +3,7 @@ import type { MeshcoreHistoryStore } from "../persistence-store.js";
 
 const MAX_LOGS = 500;
 const MAX_QUEUE_HISTORY = 200;
-const DASHBOARD_HISTORY_MS = 24 * 60 * 60 * 1000;
+const DASHBOARD_HISTORY_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type DashboardLogLevel = "info" | "warn" | "error";
 
@@ -35,6 +35,7 @@ export interface DashboardAdvertLocation {
   lat: number;
   lon: number;
   responseFromMeshcoreIO?: string;
+  presetTitle?: string;
 }
 
 export interface DashboardQueueItem {
@@ -70,7 +71,7 @@ export interface DashboardSnapshot {
   queue: DashboardQueueItem[];
   queueHistory: DashboardQueueItem[];
   workers: DashboardWorkerSnapshot[];
-  advertsLast24Hours: DashboardAdvertLocation[];
+  advertsLast7Days: DashboardAdvertLocation[];
 }
 
 export interface DashboardJobSnapshot {
@@ -211,6 +212,7 @@ export class DashboardState {
     observerName?: string;
     lat: number;
     lon: number;
+    presetTitle?: string;
   }): void {
     this.adverts.set(input.requestId, {
       id: input.requestId,
@@ -226,6 +228,7 @@ export class DashboardState {
       observerName: input.observerName,
       lat: input.lat,
       lon: input.lon,
+      presetTitle: input.presetTitle,
     });
     this.cleanupAdvertLocations();
   }
@@ -241,6 +244,7 @@ export class DashboardState {
     observerName?: string;
     lat: number;
     lon: number;
+    presetTitle?: string;
   }): void {
     const existing = this.adverts.get(input.requestId);
     this.adverts.set(input.requestId, {
@@ -258,6 +262,7 @@ export class DashboardState {
       lat: input.lat,
       lon: input.lon,
       responseFromMeshcoreIO: existing?.responseFromMeshcoreIO,
+      presetTitle: input.presetTitle,
     });
     this.cleanupAdvertLocations();
   }
@@ -365,7 +370,7 @@ export class DashboardState {
         }),
       queueHistory: [...this.queueHistory],
       workers: [...this.workers.values()].sort((a, b) => a.index - b.index),
-      advertsLast24Hours: [...this.adverts.values()].sort((a, b) => a.at.localeCompare(b.at)),
+      advertsLast7Days: [...this.adverts.values()].sort((a, b) => a.at.localeCompare(b.at)),
     };
   }
 

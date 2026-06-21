@@ -154,7 +154,7 @@ test("dashboard API returns the expected payload shape", async () => {
     assert.equal(body.reader, undefined);
     assert.deepEqual(body.queue.items, []);
     assert.deepEqual(body.worker.workers, []);
-    assert.deepEqual(body.map.advertsLast24Hours, []);
+    assert.deepEqual(body.map.advertsLast7Days, []);
   });
 });
 
@@ -197,12 +197,12 @@ test("dashboard API exposes only render-safe fields", async () => {
     assert.equal(body.queue.history[0].job.nodePublicKey, job.nodePublicKey);
     assert.deepEqual(body.queue.history[0].job.radioParams, { freq: 869.5, bw: 125, sf: 9, cr: 5 });
     assert.equal(body.queue.history[0].responseSummary, "NODES_INSERTED");
-    assert.equal(body.map.advertsLast24Hours[0].requestKey, "request-");
-    assert.equal(body.map.advertsLast24Hours[0].requestId, undefined);
-    assert.equal(body.map.advertsLast24Hours[0].advertType, "REPEATER");
-    assert.equal(body.map.advertsLast24Hours[0].nodeKey, "aaaaaaaa");
-    assert.equal(body.map.advertsLast24Hours[0].nodePublicKey, job.nodePublicKey);
-    assert.equal(body.map.advertsLast24Hours[0].radioParams, undefined);
+    assert.equal(body.map.advertsLast7Days[0].requestKey, "request-");
+    assert.equal(body.map.advertsLast7Days[0].requestId, undefined);
+    assert.equal(body.map.advertsLast7Days[0].advertType, "REPEATER");
+    assert.equal(body.map.advertsLast7Days[0].nodeKey, "aaaaaaaa");
+    assert.equal(body.map.advertsLast7Days[0].nodePublicKey, job.nodePublicKey);
+    assert.equal(body.map.advertsLast7Days[0].radioParams, undefined);
     assert.equal(body.worker.workers[0].workerKey, "worker-1");
     assert.equal(body.worker.workers[0].id, undefined);
     assert.equal(body.worker.workers[0].currentJob.requestKey, "request-");
@@ -213,7 +213,7 @@ test("dashboard API exposes only render-safe fields", async () => {
     assert.equal(body.queue.history[0].id, undefined);
     assert.equal(body.queue.history[0].position, undefined);
     assert.equal(body.queue.history[0].workerId, undefined);
-    assert.equal(body.map.advertsLast24Hours[0].id, undefined);
+    assert.equal(body.map.advertsLast7Days[0].id, undefined);
     assert.equal(body.worker.workers[0].updatedAt, undefined);
     assert.equal(serialized.includes("deadbeef"), false);
     assert.equal(serialized.includes("rawPacketHex"), false);
@@ -273,7 +273,7 @@ test("dashboard map API exposes only NODES_INSERTED adverts", async () => {
 
     assert.equal(response.status, 200);
     assert.deepEqual(
-      body.map.advertsLast24Hours.map((advert) => advert.nodeName),
+      body.map.advertsLast7Days.map((advert) => advert.nodeName),
       ["SE-STO-INSERTED"]
     );
   } finally {
@@ -331,7 +331,7 @@ test("dashboard map API keeps only the latest NODES_INSERTED advert per public k
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.deepEqual(body.map.advertsLast24Hours, [
+    assert.deepEqual(body.map.advertsLast7Days, [
       {
         requestKey: "newer-in",
         status: "accepted",
