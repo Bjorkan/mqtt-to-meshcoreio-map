@@ -57,16 +57,9 @@ test("dashboard serves HTML at root and index", async () => {
       assert.match(body, /maplibre-gl@5\.5\.0/);
       assert.match(body, /new maplibregl\.Map/);
       assert.match(body, /new maplibregl\.NavigationControl/);
-      assert.match(body, /new maplibregl\.TerrainControl/);
       assert.match(body, /https:\/\/tiles\.openfreemap\.org\/styles\/liberty/);
-      assert.match(body, /https:\/\/tiles\.mapterhorn\.com\/tilejson\.json/);
       assert.match(body, /maxPitch: 85/);
       assert.match(body, /maplibreMap\.once\("style\.load"/);
-      assert.match(body, /maplibreMap\.setTerrain/);
-      assert.match(body, /maplibreMap\.setSky/);
-      assert.match(body, /building-3d/);
-      assert.match(body, /fill-extrusion-height/);
-      assert.match(body, /fill-extrusion-opacity", 0\.72/);
       assert.match(body, /function advertNodeType/);
       assert.match(body, /normalized === "REPEATER"\) return 2/);
       assert.match(body, /normalized === "ROOM"\) return 3/);

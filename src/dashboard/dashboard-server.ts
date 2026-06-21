@@ -381,15 +381,11 @@ const DASHBOARD_HTML = `<!doctype html>
     const MAP_ADVERT_LAYER_ID = "meshcore-advert-icons";
     const MAP_ADVERT_DOT_LAYER_ID = "meshcore-advert-dots";
     const MAP_ADVERT_HIT_LAYER_ID = "meshcore-advert-hit-area";
-    const MAP_TERRAIN_SOURCE_ID = "meshcore-terrain";
-    const MAP_HILLSHADE_SOURCE_ID = "meshcore-hillshade";
-    const MAP_HILLSHADE_LAYER_ID = "meshcore-hillshade";
     const MAP_ICON_COLOR = "#61d394";
     let latestMapAdverts = [];
     let maplibreMap = null;
     let mapLayersReady = false;
     let mapLayerSetupPromise = null;
-    let terrainControlAdded = false;
     let currentPopup = null;
     let mapStyleLoaded = false;
     let pendingRender = null;
@@ -535,7 +531,7 @@ const DASHBOARD_HTML = `<!doctype html>
         maxPitch: 85,
         maxZoom: 18,
         renderWorldCopies: true,
-        style: "https://tiles.openfreemap.org/styles/liberty",
+        style: "https://tiles.openfreemap.org/styles/dark",
       });
       maplibreMap.addControl(new maplibregl.NavigationControl({
         visualizePitch: true,
@@ -546,65 +542,6 @@ const DASHBOARD_HTML = `<!doctype html>
         mapStyleLoaded = true;
         void renderMap(latestMapAdverts);
       });
-      maplibreMap.once("load", () => {
-        ensure3DMapStyle();
-      });
-    }
-
-    function ensure3DMapStyle() {
-      if (!maplibreMap || !maplibreMap.isStyleLoaded()) return;
-      if (!maplibreMap.getSource(MAP_TERRAIN_SOURCE_ID)) {
-        maplibreMap.addSource(MAP_TERRAIN_SOURCE_ID, {
-          type: "raster-dem",
-          url: "https://tiles.mapterhorn.com/tilejson.json",
-        });
-      }
-      if (!maplibreMap.getSource(MAP_HILLSHADE_SOURCE_ID)) {
-        maplibreMap.addSource(MAP_HILLSHADE_SOURCE_ID, {
-          type: "raster-dem",
-          url: "https://tiles.mapterhorn.com/tilejson.json",
-        });
-      }
-      if (!maplibreMap.getLayer(MAP_HILLSHADE_LAYER_ID)) {
-        const hillshadeBeforeLayer = maplibreMap.getLayer("building") ? "building" : undefined;
-        maplibreMap.addLayer({
-          id: MAP_HILLSHADE_LAYER_ID,
-          type: "hillshade",
-          source: MAP_HILLSHADE_SOURCE_ID,
-          layout: { visibility: "visible" },
-          paint: {
-            "hillshade-shadow-color": "#473B24",
-            "hillshade-highlight-color": "#f3ead8",
-            "hillshade-accent-color": "#6f7f8e",
-          },
-        }, hillshadeBeforeLayer);
-      }
-      if (maplibreMap.getLayer("building-3d")) {
-        maplibreMap.setLayerZoomRange("building-3d", 13, 24);
-        maplibreMap.setPaintProperty("building-3d", "fill-extrusion-height", [
-          "to-number",
-          ["coalesce", ["get", "render_height"], ["get", "height"]],
-          12,
-        ]);
-        maplibreMap.setPaintProperty("building-3d", "fill-extrusion-base", [
-          "to-number",
-          ["coalesce", ["get", "render_min_height"], ["get", "min_height"]],
-          0,
-        ]);
-        maplibreMap.setPaintProperty("building-3d", "fill-extrusion-opacity", 0.72);
-      }
-      maplibreMap.setTerrain({
-        source: MAP_TERRAIN_SOURCE_ID,
-        exaggeration: 1.25,
-      });
-      if (!terrainControlAdded) {
-        maplibreMap.addControl(new maplibregl.TerrainControl({
-          source: MAP_TERRAIN_SOURCE_ID,
-          exaggeration: 1.25,
-        }), "top-right");
-        terrainControlAdded = true;
-      }
-      maplibreMap.setSky({});
     }
 
     function markerKey(advert) {
