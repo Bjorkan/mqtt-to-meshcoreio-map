@@ -34,6 +34,11 @@ Run both before publishing meaningful runtime changes.
 
 ## Runtime Notes
 
+## Reviewer
+
+There is a `critical-reviewer` subagent at `.opencode/agents/critical-reviewer.md`.
+Invoke it before every commit to catch bugs, type errors, and logic flaws.
+
 - Do not log private keys or unredacted MQTT credentials.
 - The upload identity is generated fresh at startup. Logging the public key is expected; logging the private key is not.
 - The observer cache should keep only the latest valid radio status per observer and drop status older than 24 hours.

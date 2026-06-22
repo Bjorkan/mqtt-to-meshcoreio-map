@@ -300,6 +300,11 @@ const DASHBOARD_HTML = `<!doctype html>
       cursor: pointer;
     }
     .icon-button:hover { border-color: var(--accent); }
+    .mqtt-source-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; }
+    .mqtt-source-dot.connected { background:var(--ok); }
+    .mqtt-source-dot.disconnected { background:var(--error); }
+    .mqtt-source-status { display:inline-flex; align-items:center; gap:4px; font-size:13px; margin-right:12px; }
+    .mqtt-source-status .muted { font-size:13px; }
     @media (max-width: 940px) {
       .panels { grid-template-columns: 1fr; }
       .panels > section { height: 360px; }
@@ -324,7 +329,10 @@ const DASHBOARD_HTML = `<!doctype html>
 <body>
   <header>
     <h1>MQTT to Meshcore.io Map Dashboard</h1>
-    <div class="muted" id="updated">Waiting for data</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <span id="mqtt-sources"></span>
+      <span class="muted" id="updated">Waiting for data</span>
+    </div>
   </header>
   <div class="dashboard-error" id="dashboard-error" role="status" aria-live="polite"></div>
   <main>
@@ -505,11 +513,27 @@ const DASHBOARD_HTML = `<!doctype html>
       return null;
     }
 
+    function renderMqttSources(snapshot) {
+      const target = document.getElementById("mqtt-sources");
+      const sources = snapshot.mqttSources || {};
+      const entries = Object.entries(sources);
+      if (entries.length === 0) {
+        target.innerHTML = "";
+        return;
+      }
+      const html = entries.map(([name, status]) =>
+        '<span class="mqtt-source-status"><span class="mqtt-source-dot ' + escapeText(status.state) + '"></span>' +
+        escapeText(name) + '<span class="muted">' + escapeText(status.detail || "") + '</span></span>'
+      ).join("");
+      if (target.innerHTML !== html) target.innerHTML = html;
+    }
+
     function renderStats(snapshot) {
       setTextIfChanged("stat-queue", String((snapshot.queue.items || []).length));
       setTextIfChanged("stat-workers", String((snapshot.worker.workers || []).length));
       setTextIfChanged("stat-adverts", String((snapshot.map.advertsLast7Days || []).length));
       setTextIfChanged("updated", "Updated " + formatTime(snapshot.generatedAt));
+      renderMqttSources(snapshot);
     }
 
     // SVG icons are loaded from vendored files in this repository, adapted from meshcore-dev/map.meshcore.io (MIT licence).
@@ -1035,6 +1059,7 @@ function dashboardPayload(state: DashboardState): unknown {
   const snapshot = state.snapshot();
   return {
     generatedAt: snapshot.generatedAt,
+    mqttSources: snapshot.mqttSources,
     queue: {
       items: snapshot.queue.map(queueItemPayload),
       history: snapshot.queueHistory.slice(0, 100).map(queueItemPayload),

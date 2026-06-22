@@ -63,9 +63,22 @@ export interface MapApiResponseBody {
   error?: string;
 }
 
+export interface MqttSourceConfig {
+  name: string;
+  url: string;
+  username: string;
+  password: string;
+  clientId: string;
+  topicFilter: string;
+  reconnectPeriodMs: number;
+  connectTimeoutMs: number;
+  rejectUnauthorized: boolean;
+}
+
 export interface AdvertLogContext {
   advertLabel: string;
   observerLabel: string;
+  sourceName?: string;
 }
 
 export interface MapUploadWorkRequest {

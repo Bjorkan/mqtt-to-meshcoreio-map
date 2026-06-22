@@ -8,12 +8,13 @@ import {
   type MapUploaderConfig,
 } from "./map-uploader.js";
 import { TursoPersistenceStore, type PersistenceStore } from "./persistence-store.js";
-import type { MapUploadWorkRequest } from "./map-types.js";
+import type { MapUploadWorkRequest, MqttSourceConfig } from "./map-types.js";
 import { fetchSuggestedRadioPresets } from "./suggested-radio-presets.js";
 
 const DEFAULT_TURSO_PATH = "/data/mqtt-to-meshcoreio-map.turso";
 
 export interface RuntimeConfig {
+  sources: MqttSourceConfig[];
   sourceUrl: string;
   sourceUser: string;
   sourcePass: string;
@@ -29,6 +30,7 @@ export interface RuntimeConfig {
 
 export interface Runtime {
   client: MqttClient;
+  clients: MqttClient[];
   dashboard?: DashboardServer;
   sourceFirstSubscribeAttempt: Promise<void>;
   sourceSubscribed: Promise<void>;
@@ -39,7 +41,7 @@ export interface RuntimeDependencies {
   connect?: typeof mqtt.connect;
   mapUploader?: {
     ready?: Promise<void>;
-    handleMqttMessage(topic: string, payload: Buffer): void | Promise<void>;
+    handleMqttMessage(topic: string, payload: Buffer, sourceName?: string): void | Promise<void>;
   };
 }
 
@@ -74,16 +76,59 @@ function envBool(value: string | undefined, fallback: boolean): boolean {
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
+function loadMqttSources(env: NodeJS.ProcessEnv): MqttSourceConfig[] {
+  const sources: MqttSourceConfig[] = [];
+
+  // Scan for numbered source configs (SOURCE_1_MQTT_URL, SOURCE_2_MQTT_URL, ...)
+  let index = 1;
+  while (env[`SOURCE_${index}_MQTT_URL`] !== undefined) {
+    const url = env[`SOURCE_${index}_MQTT_URL`]!;
+    sources.push({
+      name: env[`SOURCE_${index}_NAME`] || url,
+      url,
+      username: env[`SOURCE_${index}_MQTT_USERNAME`] || "",
+      password: env[`SOURCE_${index}_MQTT_PASSWORD`] || "",
+      clientId: env[`SOURCE_${index}_CLIENT_ID`] || `mqtt-to-meshcoreio-map-${index}`,
+      topicFilter: env[`SOURCE_${index}_TOPIC_FILTER`] || "meshcore/#",
+      reconnectPeriodMs: envIntInRange(env[`SOURCE_${index}_RECONNECT_PERIOD_MS`] || env.MQTT_RECONNECT_PERIOD_MS, 5000, 250, 300000),
+      connectTimeoutMs: envIntInRange(env[`SOURCE_${index}_CONNECT_TIMEOUT_MS`] || env.MQTT_CONNECT_TIMEOUT_MS, 30000, 1000, 300000),
+      rejectUnauthorized: envBool(env[`SOURCE_${index}_REJECT_UNAUTHORIZED`] || env.SOURCE_REJECT_UNAUTHORIZED, true),
+    });
+    index++;
+  }
+
+  // Fall back to legacy single-source config (treated as source 1)
+  if (sources.length === 0) {
+    const url = env.SOURCE_MQTT_URL || "mqtt://localhost:1883";
+    sources.push({
+      name: env.SOURCE_1_NAME || env.SOURCE_NAME || url,
+      url,
+      username: env.SOURCE_MQTT_USERNAME || "",
+      password: env.SOURCE_MQTT_PASSWORD || "",
+      clientId: env.SOURCE_CLIENT_ID || "mqtt-to-meshcoreio-map",
+      topicFilter: env.TOPIC_FILTER || "meshcore/#",
+      reconnectPeriodMs: envIntInRange(env.MQTT_RECONNECT_PERIOD_MS, 5000, 250, 300000),
+      connectTimeoutMs: envIntInRange(env.MQTT_CONNECT_TIMEOUT_MS, 30000, 1000, 300000),
+      rejectUnauthorized: envBool(env.SOURCE_REJECT_UNAUTHORIZED, true),
+    });
+  }
+
+  return sources;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
+  const sources = loadMqttSources(env);
+  const firstSource = sources[0];
   return {
-    sourceUrl: env.SOURCE_MQTT_URL || "mqtt://localhost:1883",
-    sourceUser: env.SOURCE_MQTT_USERNAME || "",
-    sourcePass: env.SOURCE_MQTT_PASSWORD || "",
-    sourceClientId: env.SOURCE_CLIENT_ID || "mqtt-to-meshcoreio-map",
-    topicFilter: env.TOPIC_FILTER || "meshcore/#",
-    reconnectPeriodMs: envIntInRange(env.MQTT_RECONNECT_PERIOD_MS, 5000, 250, 300000),
-    connectTimeoutMs: envIntInRange(env.MQTT_CONNECT_TIMEOUT_MS, 30000, 1000, 300000),
-    rejectUnauthorized: envBool(env.SOURCE_REJECT_UNAUTHORIZED, true),
+    sources,
+    sourceUrl: firstSource.url,
+    sourceUser: firstSource.username,
+    sourcePass: firstSource.password,
+    sourceClientId: firstSource.clientId,
+    topicFilter: firstSource.topicFilter,
+    reconnectPeriodMs: firstSource.reconnectPeriodMs,
+    connectTimeoutMs: firstSource.connectTimeoutMs,
+    rejectUnauthorized: firstSource.rejectUnauthorized,
     tursoPath: env.TURSO_PATH || env.SQLITE_PATH || DEFAULT_TURSO_PATH,
     dashboard: {
       enabled: envBool(env.ENABLE_DASHBOARD, false),
@@ -140,14 +185,14 @@ export function redactUrlCredentials(value: string): string {
   }
 }
 
-function buildMqttOptions(config: RuntimeConfig): IClientOptions {
+function buildMqttOptions(source: MqttSourceConfig): IClientOptions {
   return {
-    username: config.sourceUser || undefined,
-    password: config.sourcePass || undefined,
-    clientId: config.sourceClientId,
-    reconnectPeriod: config.reconnectPeriodMs,
-    connectTimeout: config.connectTimeoutMs,
-    rejectUnauthorized: config.rejectUnauthorized,
+    username: source.username || undefined,
+    password: source.password || undefined,
+    clientId: source.clientId,
+    reconnectPeriod: source.reconnectPeriodMs,
+    connectTimeout: source.connectTimeoutMs,
+    rejectUnauthorized: source.rejectUnauthorized,
     clean: true,
   };
 }
@@ -303,8 +348,7 @@ export function startRuntime(
     warn(`Runtime dependencies failed to initialize: ${error.message}.`);
   });
   const connect = dependencies.connect ?? mqtt.connect;
-  const client = connect(config.sourceUrl, buildMqttOptions(config));
-  const safeSourceUrl = redactUrlCredentials(config.sourceUrl);
+  const clients: MqttClient[] = [];
 
   let resolveSubscribed!: () => void;
   let subscribedResolved = false;
@@ -319,64 +363,74 @@ export function startRuntime(
     resolveSubscribed = resolve;
   });
 
-  client.on("connect", () => {
-    dashboardState?.setMqttSourceStatus("connected", `Connected to ${safeSourceUrl}.`);
-    log(`Connected to MQTT source ${safeSourceUrl}.`, "mqtt-reader");
-    client.subscribe(config.topicFilter, { qos: 0 }, (error) => {
-      if (error) {
+  for (const source of config.sources) {
+    const client = connect(source.url, buildMqttOptions(source));
+    clients.push(client);
+    const safeUrl = redactUrlCredentials(source.url);
+    const sourceName = source.name;
+
+    client.on("connect", () => {
+      dashboardState?.setMqttSourceStatus(sourceName, "connected", `Connected to ${safeUrl}.`);
+      log(`[${sourceName}] Connected to MQTT source ${safeUrl}.`, "mqtt-reader");
+      client.subscribe(source.topicFilter, { qos: 0 }, (error) => {
+        if (error) {
+          if (!firstSubscribeAttemptSettled) {
+            firstSubscribeAttemptSettled = true;
+            rejectFirstSubscribeAttempt(error);
+          }
+          dashboardState?.setMqttSourceStatus(sourceName, "disconnected", `Subscribe failed: ${error.message}`);
+          warn(`[${sourceName}] Failed to subscribe to ${source.topicFilter}: ${error.message}`, "mqtt-reader");
+          return;
+        }
+
         if (!firstSubscribeAttemptSettled) {
           firstSubscribeAttemptSettled = true;
-          rejectFirstSubscribeAttempt(error);
+          resolveFirstSubscribeAttempt();
         }
-        dashboardState?.setMqttSourceStatus("disconnected", `Subscribe failed: ${error.message}`);
-        warn(`Failed to subscribe to ${config.topicFilter}: ${error.message}`, "mqtt-reader");
-        return;
-      }
-
-      if (!firstSubscribeAttemptSettled) {
-        firstSubscribeAttemptSettled = true;
-        resolveFirstSubscribeAttempt();
-      }
-      if (!subscribedResolved) {
-        subscribedResolved = true;
-        resolveSubscribed();
-      }
-      log(`Subscribed to ${config.topicFilter}.`, "mqtt-reader");
-    });
-  });
-
-  client.on("message", (topic, payload) => {
-    ready
-      .then(() => uploader.handleMqttMessage(topic, Buffer.from(payload)))
-      .catch((error: Error) => {
-        warn(`Map upload handling failed for ${topic}: ${error.message}`, "mqtt-reader");
+        if (!subscribedResolved) {
+          subscribedResolved = true;
+          resolveSubscribed();
+        }
+        log(`[${sourceName}] Subscribed to ${source.topicFilter}.`, "mqtt-reader");
       });
-  });
+    });
 
-  client.on("error", (error) => {
-    const message = error.message || "Connection failed.";
-    dashboardState?.setMqttSourceStatus("disconnected", message);
-    warn(`MQTT source error: ${message}`, "mqtt-reader");
-  });
+    client.on("message", (topic, payload) => {
+      ready
+        .then(() => uploader.handleMqttMessage(topic, Buffer.from(payload), sourceName))
+        .catch((error: Error) => {
+          warn(`[${sourceName}] Map upload handling failed for ${topic}: ${error.message}`, "mqtt-reader");
+        });
+    });
 
-  client.on("close", () => {
-    dashboardState?.setMqttSourceStatus("disconnected", "MQTT source connection closed.");
-  });
+    client.on("error", (error) => {
+      const message = error.message || "Connection failed.";
+      dashboardState?.setMqttSourceStatus(sourceName, "disconnected", message);
+      warn(`[${sourceName}] MQTT source error: ${message}`, "mqtt-reader");
+    });
 
-  client.on("offline", () => {
-    dashboardState?.setMqttSourceStatus("disconnected", "MQTT source is offline.");
-    warn("MQTT source is offline.", "mqtt-reader");
-  });
+    client.on("close", () => {
+      dashboardState?.setMqttSourceStatus(sourceName, "disconnected", "MQTT source connection closed.");
+    });
+
+    client.on("offline", () => {
+      dashboardState?.setMqttSourceStatus(sourceName, "disconnected", "MQTT source is offline.");
+      warn(`[${sourceName}] MQTT source is offline.`, "mqtt-reader");
+    });
+  }
 
   return {
-    client,
+    client: clients[0],
+    clients,
     dashboard,
     sourceFirstSubscribeAttempt,
     sourceSubscribed,
     stop: async () => {
-      await new Promise<void>((resolve) => {
-        client.end(true, {}, () => resolve());
-      });
+      await Promise.all(clients.map((c) =>
+        new Promise<void>((resolve) => {
+          c.end(true, {}, () => resolve());
+        })
+      ));
       if (demoAdverts) {
         clearInterval(demoAdverts);
       }
@@ -399,7 +453,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       }
 
       stopping = true;
-      log(`Received ${signal}; stopping MQTT source connection.`);
+      const sourceCount = config.sources.length;
+      log(`Received ${signal}; stopping ${sourceCount} MQTT source connection${sourceCount !== 1 ? "s" : ""}.`);
       runtime.stop()
         .then(() => {
           process.exit(0);

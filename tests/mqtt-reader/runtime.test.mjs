@@ -40,15 +40,39 @@ class FakeMqttClient extends EventEmitter {
 }
 
 function makeConfig(overrides = {}) {
-  return {
-    sourceUrl: "mqtt://source.local:1883",
-    sourceUser: "source-user",
-    sourcePass: "source-pass",
-    sourceClientId: "source-client",
+  const source = {
+    name: "mqtt://source.local:1883",
+    url: "mqtt://source.local:1883",
+    username: "source-user",
+    password: "source-pass",
+    clientId: "source-client",
     topicFilter: "meshcore/#",
     reconnectPeriodMs: 10,
     connectTimeoutMs: 100,
     rejectUnauthorized: true,
+  };
+  // Propagate top-level overrides into the source
+  if (overrides.topicFilter !== undefined) source.topicFilter = overrides.topicFilter;
+  if (overrides.reconnectPeriodMs !== undefined) source.reconnectPeriodMs = overrides.reconnectPeriodMs;
+  if (overrides.connectTimeoutMs !== undefined) source.connectTimeoutMs = overrides.connectTimeoutMs;
+  if (overrides.rejectUnauthorized !== undefined) source.rejectUnauthorized = overrides.rejectUnauthorized;
+  if (overrides.sourceUrl !== undefined) source.url = overrides.sourceUrl;
+  if (overrides.sourceUser !== undefined) source.username = overrides.sourceUser;
+  if (overrides.sourcePass !== undefined) source.password = overrides.sourcePass;
+  if (overrides.sourceClientId !== undefined) source.clientId = overrides.sourceClientId;
+  // Apply explicit source-level overrides
+  if (overrides.sources?.[0]) {
+    Object.assign(source, overrides.sources[0]);
+  }
+  return {
+    sourceUrl: source.url,
+    sourceUser: source.username,
+    sourcePass: source.password,
+    sourceClientId: source.clientId,
+    topicFilter: source.topicFilter,
+    reconnectPeriodMs: source.reconnectPeriodMs,
+    connectTimeoutMs: source.connectTimeoutMs,
+    rejectUnauthorized: source.rejectUnauthorized,
     tursoPath: ":memory:",
     mapUploader: {
       enabled: true,
@@ -61,6 +85,7 @@ function makeConfig(overrides = {}) {
       retriesAllowed: 3,
     },
     ...overrides,
+    sources: [source],
   };
 }
 
@@ -102,12 +127,12 @@ test("loads runtime configuration from environment with production defaults", ()
   assert.equal(configured.mapUploader.retriesAllowed, 5);
 });
 
-test("supports SQLITE_PATH as a backward-compatible Turso path fallback", () => {
+test("uses the TURSO_PATH environment variable", () => {
   const configured = loadConfig({
-    SQLITE_PATH: "/tmp/legacy-map.sqlite",
+    TURSO_PATH: "/tmp/map.turso",
   });
 
-  assert.equal(configured.tursoPath, "/tmp/legacy-map.sqlite");
+  assert.equal(configured.tursoPath, "/tmp/map.turso");
 });
 
 test("falls back for invalid numeric environment values", () => {

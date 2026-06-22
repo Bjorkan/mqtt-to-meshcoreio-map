@@ -36,11 +36,11 @@ export class MeshcoreMapUploader {
     ]).then(() => undefined);
   }
 
-  handleMqttMessage(topic: string, payload: Buffer): void {
-    this.reader.handleMqttMessage(topic, payload);
+  handleMqttMessage(topic: string, payload: Buffer, sourceName?: string): void {
+    this.reader.handleMqttMessage(topic, payload, sourceName);
   }
 
-  processMqttMessage(topic: string, payload: Buffer): Promise<void> {
-    return this.reader.processMqttMessage(topic, payload);
+  processMqttMessage(topic: string, payload: Buffer, sourceName?: string): Promise<void> {
+    return this.reader.processMqttMessage(topic, payload, sourceName);
   }
 }

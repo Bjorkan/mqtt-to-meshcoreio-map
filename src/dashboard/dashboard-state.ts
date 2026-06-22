@@ -67,6 +67,7 @@ export interface DashboardMqttSourceStatus {
 export interface DashboardSnapshot {
   generatedAt: string;
   mqttSource: DashboardMqttSourceStatus;
+  mqttSources: Record<string, DashboardMqttSourceStatus>;
   logs: DashboardLogEntry[];
   queue: DashboardQueueItem[];
   queueHistory: DashboardQueueItem[];
@@ -140,6 +141,7 @@ export class DashboardState {
   private readonly persistenceTasks = new Set<Promise<void>>();
   private readonly workers = new Map<string, DashboardWorkerSnapshot>();
   private mqttSource: DashboardMqttSourceStatus;
+  private readonly mqttSources: Record<string, DashboardMqttSourceStatus> = {};
   readonly ready: Promise<void>;
 
   constructor(options: DashboardStateOptions = {}) {
@@ -192,14 +194,31 @@ export class DashboardState {
   }
 
   setMqttSourceStatus(
-    state: DashboardMqttSourceStatus["state"],
+    sourceNameOrState: string | DashboardMqttSourceStatus["state"],
+    stateOrDetail?: DashboardMqttSourceStatus["state"] | string,
     detail?: string
   ): void {
-    this.mqttSource = {
-      state,
-      detail,
+    // Backward compat: setMqttSourceStatus(state, detail) when called with exactly 2 arguments
+    if (arguments.length <= 2 && (sourceNameOrState === "connected" || sourceNameOrState === "disconnected")) {
+      this.mqttSource = {
+        state: sourceNameOrState,
+        detail: stateOrDetail as string | undefined,
+        updatedAt: this.isoNow(),
+      };
+      const defaultName = "default";
+      this.mqttSources[defaultName] = { ...this.mqttSource };
+      return;
+    }
+
+    // New multi-source: setMqttSourceStatus(sourceName, state, detail?)
+    const sourceName = sourceNameOrState;
+    const statusState = stateOrDetail as DashboardMqttSourceStatus["state"];
+    this.mqttSources[sourceName] = {
+      state: statusState,
+      detail: detail,
       updatedAt: this.isoNow(),
     };
+    this.mqttSource = { ...this.mqttSources[sourceName] };
   }
 
   recordAdvertLocation(input: {
@@ -360,6 +379,7 @@ export class DashboardState {
     return {
       generatedAt: this.isoNow(),
       mqttSource: { ...this.mqttSource },
+      mqttSources: { ...this.mqttSources },
       logs: [...this.logs].reverse(),
       queue: [...this.queueItems.values()]
         .filter((item) => item.state === "queued" || item.state === "active" || item.state === "retrying")

@@ -48,7 +48,7 @@ Important runtime settings:
 - `MESHCOREIO_REQUEST_TIMEOUT_MS`: HTTP timeout for MeshCore.io requests. Default: `10000`.
 - `MESHCOREIO_MIN_REUPLOAD_SECONDS`: minimum accepted advert timestamp gap per advertised node. Default: `3600`.
 - `TZ`: time zone used for service log timestamps and dashboard-rendered timestamps, for example `Europe/Stockholm`.
-- `TURSO_PATH`: Turso database path for observer radio status and dashboard MeshCore.io response history. Default: `/data/mqtt-to-meshcoreio-map.turso`. `SQLITE_PATH` is still accepted as a backward-compatible fallback.
+- `TURSO_PATH`: Turso database path for observer radio status and dashboard MeshCore.io response history. Default: `/data/mqtt-to-meshcoreio-map.turso`.
 - `ENABLE_DASHBOARD`: enable the read-only dashboard. Default: `false`.
 - `DASHBOARD_PORT`: internal dashboard listen port. Default: `80`.
 

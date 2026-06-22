@@ -59,7 +59,7 @@ Frequency may arrive as MHz, kHz, or Hz. Bandwidth may arrive as kHz or Hz. The 
 
 Set `TZ` to an IANA time zone such as `Europe/Stockholm` to format service log timestamps and dashboard-rendered timestamps in that time zone.
 
-Only the latest valid status for each observer is kept. Invalid, offline, or incomplete status messages do not overwrite the latest valid radio parameters. Observer status older than one hour is dropped. Valid observer statuses are also stored in Turso at `TURSO_PATH`, which defaults to `/data/mqtt-to-meshcoreio-map.turso`, and loaded again after restart. `SQLITE_PATH` is still accepted as a backward-compatible fallback.
+Only the latest valid status for each observer is kept. Invalid, offline, or incomplete status messages do not overwrite the latest valid radio parameters. Observer status older than one hour is dropped. Valid observer statuses are also stored in Turso at `TURSO_PATH`, which defaults to `/data/mqtt-to-meshcoreio-map.turso`, and loaded again after restart.
 
 Dashboard history for adverts that received a MeshCore.io server response is also stored in the same Turso database. The stored response can be any MeshCore.io response body, such as `NODES_INSERTED`, `ERR_ADVERT_DUPLICATE`, or `ERR_COORDS_MISSING`; entries without a MeshCore.io response are not persisted. Stored dashboard history older than 24 hours is removed. The dashboard history list exposes the newest 100 entries, while the map exposes every stored 24-hour `NODES_INSERTED` advert that has coordinates.
 

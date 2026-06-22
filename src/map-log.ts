@@ -113,12 +113,18 @@ export function formatMapUploadLogLine(message: string, date = new Date()): stri
   return colorizeMapUploadLogLine(`${rawMapUploadLogPrefix(date)} ${sanitizeLogText(message, MAX_LOG_BODY_CHARS)}`);
 }
 
-export function logMapUpload(message: string): void {
-  recordDashboardLog(message, "info");
-  console.log(formatMapUploadLogLine(message));
+function formatSourcePrefix(sourceName?: string): string {
+  return sourceName ? `[${sanitizeLogText(sourceName, 80)}] ` : "";
 }
 
-export function warnMapUpload(message: string): void {
-  recordDashboardLog(message, "warn");
-  console.warn(formatMapUploadLogLine(message));
+export function logMapUpload(message: string, sourceName?: string): void {
+  const prefixed = formatSourcePrefix(sourceName) + message;
+  recordDashboardLog(prefixed, "info");
+  console.log(formatMapUploadLogLine(prefixed));
+}
+
+export function warnMapUpload(message: string, sourceName?: string): void {
+  const prefixed = formatSourcePrefix(sourceName) + message;
+  recordDashboardLog(prefixed, "warn");
+  console.warn(formatMapUploadLogLine(prefixed));
 }
