@@ -4,7 +4,6 @@ export interface MapUploaderConfig {
   dryRun: boolean;
   minReuploadIntervalSeconds: number;
   requestTimeoutMs: number;
-  maxConcurrentUploads: number;
   maxQueuedUploads: number;
   retriesAllowed: number;
 }
@@ -18,7 +17,7 @@ export interface MapUploaderDependencies {
   fetch?: typeof fetch;
   now?: () => number;
   signingIdentity?: MapUploadSigningIdentity;
-  workerDelay?: (ms: number) => Promise<void>;
+  uploadDelay?: (ms: number) => Promise<void>;
 }
 
 export interface RadioParams {

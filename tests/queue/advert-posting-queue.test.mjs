@@ -32,7 +32,7 @@ test('stays silent about a failed attempt that succeeds on retry', async () => {
 
       return { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
-    workerDelay: async () => {},
+    uploadDelay: async () => {},
   });
   await rememberDefaultStatus(uploader);
 
@@ -48,13 +48,12 @@ test('stays silent about a failed attempt that succeeds on retry', async () => {
   assert.match(logs.at(-1), /sent to meshcore\.io/);
 });
 
-test('limits concurrent map uploads and queues the rest', async () => {
+test('serializes uploads and queues the rest', async () => {
   let active = 0;
   let peak = 0;
   const releases = [];
   const requests = [];
   const uploader = new MeshcoreMapUploader(makeConfig({
-    maxConcurrentUploads: 1,
     maxQueuedUploads: 5,
   }), {
     fetch: async (url, init) => {
@@ -65,7 +64,7 @@ test('limits concurrent map uploads and queues the rest', async () => {
       active -= 1;
       return { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
-    workerDelay: async () => {},
+    uploadDelay: async () => {},
   });
   await rememberDefaultStatus(uploader);
 
@@ -95,7 +94,6 @@ test('drops extra adverts when the upload queue is full', async () => {
   const releases = [];
   const requests = [];
   const uploader = new MeshcoreMapUploader(makeConfig({
-    maxConcurrentUploads: 1,
     maxQueuedUploads: 1,
   }), {
     fetch: async (url, init) => {
@@ -103,7 +101,7 @@ test('drops extra adverts when the upload queue is full', async () => {
       await new Promise((resolve) => releases.push(resolve));
       return { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
-    workerDelay: async () => {},
+    uploadDelay: async () => {},
   });
   await rememberDefaultStatus(uploader);
 
@@ -137,23 +135,22 @@ test('drops extra adverts when the upload queue is full', async () => {
   await Promise.all([first, second]);
 });
 
-test('worker waits before draining the next queued upload', async () => {
+test('waits between uploads before draining the next queued advert', async () => {
   const requests = [];
   let delayCalls = 0;
-  let releaseFirstWorkerDelay;
+  let releaseFirstUploadDelay;
   const uploader = new MeshcoreMapUploader(makeConfig({
-    maxConcurrentUploads: 1,
     maxQueuedUploads: 5,
   }), {
     fetch: async (url, init) => {
       requests.push({ url, init });
       return { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
-    workerDelay: async () => {
+    uploadDelay: async () => {
       delayCalls += 1;
       if (delayCalls === 1) {
         await new Promise((resolve) => {
-          releaseFirstWorkerDelay = resolve;
+          releaseFirstUploadDelay = resolve;
         });
       }
     },
@@ -173,7 +170,7 @@ test('worker waits before draining the next queued upload', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(requests.length, 1);
 
-  releaseFirstWorkerDelay();
+  releaseFirstUploadDelay();
   await second;
   assert.equal(requests.length, 2);
 });
@@ -182,7 +179,6 @@ test('prevents concurrent uploads inside the same node reupload interval', async
   const releases = [];
   const requests = [];
   const uploader = new MeshcoreMapUploader(makeConfig({
-    maxConcurrentUploads: 2,
     minReuploadIntervalSeconds: 3600,
   }), {
     fetch: async (url, init) => {
@@ -190,7 +186,7 @@ test('prevents concurrent uploads inside the same node reupload interval', async
       await new Promise((resolve) => releases.push(resolve));
       return { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
-    workerDelay: async () => {},
+    uploadDelay: async () => {},
   });
   await rememberDefaultStatus(uploader);
 
@@ -217,7 +213,6 @@ test('skips an older queued advert after a newer advert was uploaded', async () 
   const newerPacket = makeAdvertPacket({ timestamp: 1_800_403_700 });
   const olderPacket = makeAdvertPacket({ timestamp: 1_800_400_000 });
   const uploader = new MeshcoreMapUploader(makeConfig({
-    maxConcurrentUploads: 1,
     maxQueuedUploads: 5,
     minReuploadIntervalSeconds: 0,
   }), {
@@ -228,7 +223,7 @@ test('skips an older queued advert after a newer advert was uploaded', async () 
       });
       return { ok: true, status: 200, text: async () => '{"ok":true}' };
     },
-    workerDelay: async () => {},
+    uploadDelay: async () => {},
   });
   await rememberDefaultStatus(uploader);
 
@@ -255,7 +250,7 @@ test('drops uploads after three failed tries', async () => {
   const failing = makeFetch({ ok: false, status: 503, text: 'down' });
   const uploader = new MeshcoreMapUploader(makeConfig(), {
     fetch: failing.fetch,
-    workerDelay: async () => {},
+    uploadDelay: async () => {},
   });
   await rememberDefaultStatus(uploader);
 
@@ -279,7 +274,7 @@ test('queue drops incoming work requests with no retries allowed silently', asyn
     makeConfig(),
     { post: async () => ({ status: 'handled', pubKey: ADVERT_SEED.toString('hex'), timestamp: 1 }) },
     () => {},
-    { workerDelay: async () => {} }
+    { uploadDelay: async () => {} }
   );
 
   const logs = await captureConsoleOutput(async () => {
@@ -307,4 +302,37 @@ test('queue drops incoming work requests with no retries allowed silently', asyn
   });
 
   assert.deepEqual(logs, []);
+});
+
+test('aborts an upload whose server stalls mid-body instead of hanging the queue', async () => {
+  const requests = [];
+  const uploader = new MeshcoreMapUploader(makeConfig({ requestTimeoutMs: 50 }), {
+    fetch: async (url, init) => {
+      requests.push({ url, init });
+      return {
+        ok: true,
+        status: 200,
+        text: () => new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => {
+            reject(new DOMException('This operation was aborted', 'AbortError'));
+          });
+        }),
+      };
+    },
+    uploadDelay: async () => {},
+  });
+  await rememberDefaultStatus(uploader);
+
+  const logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_600_000 })) }))
+    );
+  });
+
+  assert.equal(requests.length, 3);
+  assert.match(
+    logs.at(-1),
+    /Advert SE-STO-TEST \([0-9a-f]{6}\) dropped after 3 attempts: operation aborted\./
+  );
 });

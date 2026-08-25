@@ -20,23 +20,19 @@ export class MeshcoreMapUploader {
     config: MapUploaderConfig,
     dependencies: MapUploaderDependencies = {},
   ) {
-    const posters = Array.from(
-      { length: config.maxConcurrentUploads },
-      () => new MeshcoreioPoster(config, dependencies),
-    );
+    const poster = new MeshcoreioPoster(config, dependencies);
     const queue = new AdvertPostingQueue(
       config,
-      posters,
+      poster,
       (pubKey, timestamp) =>
         this.reader.rememberSuccessfulAdvert(pubKey, timestamp),
       dependencies,
     );
 
     this.reader = new MqttBrokerAdvertReader(config, queue, dependencies);
-    this.ready = Promise.all([
-      this.reader.ready,
-      ...posters.map((poster) => poster.ready),
-    ]).then(() => undefined);
+    this.ready = Promise.all([this.reader.ready, poster.ready]).then(
+      () => undefined,
+    );
   }
 
   handleMqttMessage(topic: string, payload: Buffer, sourceName?: string): void {

@@ -80,7 +80,6 @@ function makeConfig(overrides = {}) {
       dryRun: false,
       minReuploadIntervalSeconds: 3600,
       requestTimeoutMs: 10000,
-      maxConcurrentUploads: 2,
       maxQueuedUploads: 25,
       retriesAllowed: 3,
     },
@@ -106,7 +105,6 @@ test("loads runtime configuration from environment with production defaults", ()
     SOURCE_REJECT_UNAUTHORIZED: "false",
     MESHCOREIO_API_URL: "https://map.example/api",
     MESHCOREIO_DRY_RUN: "true",
-    MESHCOREIO_WORKERS: "4",
     MESHCOREIO_MAX_QUEUED_UPLOADS: "50",
     MESHCOREIO_RETRIES_ALLOWED: "5",
   });
@@ -119,7 +117,6 @@ test("loads runtime configuration from environment with production defaults", ()
   assert.equal(configured.rejectUnauthorized, false);
   assert.equal(configured.mapUploader.apiUrl, "https://map.example/api");
   assert.equal(configured.mapUploader.dryRun, true);
-  assert.equal(configured.mapUploader.maxConcurrentUploads, 4);
   assert.equal(configured.mapUploader.maxQueuedUploads, 50);
   assert.equal(configured.mapUploader.retriesAllowed, 5);
 });
@@ -129,7 +126,6 @@ test("falls back for invalid numeric environment values", () => {
     MQTT_RECONNECT_PERIOD_MS: "-1",
     MQTT_CONNECT_TIMEOUT_MS: "0",
     MESHCOREIO_REQUEST_TIMEOUT_MS: "999999999",
-    MESHCOREIO_WORKERS: "0",
     MESHCOREIO_MAX_QUEUED_UPLOADS: "-5",
     MESHCOREIO_RETRIES_ALLOWED: "101",
   });
@@ -137,7 +133,6 @@ test("falls back for invalid numeric environment values", () => {
   assert.equal(configured.reconnectPeriodMs, 5000);
   assert.equal(configured.connectTimeoutMs, 30000);
   assert.equal(configured.mapUploader.requestTimeoutMs, 10000);
-  assert.equal(configured.mapUploader.maxConcurrentUploads, 1);
   assert.equal(configured.mapUploader.maxQueuedUploads, 25);
   assert.equal(configured.mapUploader.retriesAllowed, 3);
 });

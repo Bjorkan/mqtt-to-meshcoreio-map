@@ -33,7 +33,6 @@ export function makeConfig(overrides = {}) {
     dryRun: false,
     minReuploadIntervalSeconds: 3600,
     requestTimeoutMs: 10000,
-    maxConcurrentUploads: 2,
     maxQueuedUploads: 25,
     retriesAllowed: 3,
     ...overrides,
@@ -56,7 +55,7 @@ export function makeFetch({ ok = true, status = 200, text = '{"ok":true}' } = {}
 
 export function makeUploaderDependencies(overrides = {}) {
   return {
-    workerDelay: async () => {},
+    uploadDelay: async () => {},
     ...overrides,
   };
 }

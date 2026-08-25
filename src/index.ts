@@ -171,7 +171,6 @@ export function loadConfig(
         1000,
         120000,
       ),
-      maxConcurrentUploads: envIntInRange(env.MESHCOREIO_WORKERS, 1, 1, 32),
       maxQueuedUploads: envIntInRange(
         env.MESHCOREIO_MAX_QUEUED_UPLOADS,
         25,

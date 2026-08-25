@@ -135,8 +135,9 @@ export class MeshcoreioPoster {
         };
       }
 
-      const response = await this.postWithTimeout(requestData);
-      const rawResponseText = await response.text().catch(() => "");
+      const { response, responseText } =
+        await this.postWithTimeout(requestData);
+      const rawResponseText = responseText;
       const mapResponse = parseMapApiResponse(rawResponseText);
       const loggedText = trimLogBody(rawResponseText);
 
@@ -189,7 +190,9 @@ export class MeshcoreioPoster {
     };
   }
 
-  private async postWithTimeout(body: SignedRequest): Promise<Response> {
+  private async postWithTimeout(
+    body: SignedRequest,
+  ): Promise<{ response: Response; responseText: string }> {
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
@@ -197,12 +200,23 @@ export class MeshcoreioPoster {
     );
 
     try {
-      return await this.fetchImpl(this.config.apiUrl, {
+      // The abort signal also covers the body read, so a server that stalls
+      // mid-response cannot wedge the single upload loop forever.
+      const response = await this.fetchImpl(this.config.apiUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
+      let responseText = "";
+      try {
+        responseText = await response.text();
+      } catch (error: unknown) {
+        if (controller.signal.aborted) {
+          throw error;
+        }
+      }
+      return { response, responseText };
     } finally {
       clearTimeout(timeout);
     }
