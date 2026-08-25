@@ -32,11 +32,7 @@ export interface RuntimeDependencies {
   connect?: typeof mqtt.connect;
   mapUploader?: {
     ready?: Promise<void>;
-    handleMqttMessage(
-      topic: string,
-      payload: Buffer,
-      sourceName?: string,
-    ): void | Promise<void>;
+    handleMqttMessage(topic: string, payload: Buffer): void | Promise<void>;
   };
 }
 
@@ -289,7 +285,7 @@ export function startRuntime(
     client.on("message", (topic, payload) => {
       ready
         .then(() =>
-          uploader.handleMqttMessage(topic, Buffer.from(payload), sourceName),
+          uploader.handleMqttMessage(topic, Buffer.from(payload)),
         )
         .catch((error: Error) => {
           warn(

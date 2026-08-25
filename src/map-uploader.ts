@@ -35,15 +35,14 @@ export class MeshcoreMapUploader {
     );
   }
 
-  handleMqttMessage(topic: string, payload: Buffer, sourceName?: string): void {
-    this.reader.handleMqttMessage(topic, payload, sourceName);
+  handleMqttMessage(topic: string, payload: Buffer): void {
+    this.reader.handleMqttMessage(topic, payload);
   }
 
   processMqttMessage(
     topic: string,
     payload: Buffer,
-    sourceName?: string,
   ): Promise<void> {
-    return this.reader.processMqttMessage(topic, payload, sourceName);
+    return this.reader.processMqttMessage(topic, payload);
   }
 }

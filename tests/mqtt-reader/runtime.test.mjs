@@ -287,6 +287,7 @@ test("a valid MESHCOREIO_PRIVATE_KEY logs its derived public key instead of an e
   const originalLog = console.log;
   const lines = [];
   console.log = (...args) => {
+    // eslint-disable-next-line no-control-regex -- intentional ANSI escape stripping
     lines.push(args.join(" ").replace(/\x1b\[[0-9;]*m/g, ""));
   };
 

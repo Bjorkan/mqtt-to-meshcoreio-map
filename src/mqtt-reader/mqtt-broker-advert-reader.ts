@@ -17,7 +17,6 @@ import {
 } from "../map-utils.js";
 import { formatMapUploadLogLine } from "../map-log.js";
 import type {
-  AdvertLogContext,
   MapUploaderConfig,
   MapUploaderDependencies,
   ObserverState,
@@ -41,8 +40,8 @@ export class MqttBrokerAdvertReader {
     this.ready = Promise.resolve();
   }
 
-  handleMqttMessage(topic: string, payload: Buffer, sourceName?: string): void {
-    this.processMqttMessage(topic, payload, sourceName).catch((err: Error) => {
+  handleMqttMessage(topic: string, payload: Buffer): void {
+    this.processMqttMessage(topic, payload).catch((err: Error) => {
       console.error(formatMapUploadLogLine(`Failed: ${err.message}`));
     });
   }
@@ -50,7 +49,6 @@ export class MqttBrokerAdvertReader {
   async processMqttMessage(
     topic: string,
     payload: Buffer,
-    sourceName?: string,
   ): Promise<void> {
     await this.ready;
 

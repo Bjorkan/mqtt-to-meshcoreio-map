@@ -104,6 +104,7 @@ export function signedRequestData(requests) {
 }
 
 function stripAnsi(value) {
+  // eslint-disable-next-line no-control-regex -- intentional ANSI escape matching
   return value.replace(/\x1b\[[0-9;]+m/g, '');
 }
 

@@ -40,6 +40,8 @@ export function sanitizeLogText(
   value: string,
   maxLength = MAX_LOG_VALUE_CHARS,
 ): string {
+  // Intentionally matches control characters to escape them.
+  // eslint-disable-next-line no-control-regex -- this is a sanitizer
   const cleaned = value.replace(/[\x00-\x1f\x7f]/g, (char) => {
     const code = char.charCodeAt(0).toString(16).padStart(2, "0");
     return `\\x${code}`;
@@ -85,6 +87,8 @@ function colorizeMatches(
   color: string,
 ): string {
   const ansiCodes: string[] = [];
+  // Intentionally matches ANSI escape sequences to protect them from recoloring.
+  // eslint-disable-next-line no-control-regex -- this strips/matches ANSI escapes
   const protectedMessage = message.replace(/\x1b\[[0-9;]+m/g, (match) => {
     const token = `\uE000${String.fromCharCode(0xe100 + ansiCodes.length)}\uE001`;
     ansiCodes.push(match);
