@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { test } from "node:test";
+import { test } from "bun:test";
 
-import { loadConfig, redactUrlCredentials, startRuntime } from "../../dist/index.js";
+import {
+  loadConfig,
+  redactUrlCredentials,
+  startRuntime,
+} from "../../src/index.ts";
+import { ed25519 } from "@noble/curves/ed25519.js";
 
 class FakeMqttClient extends EventEmitter {
   constructor(url, options) {
@@ -17,7 +22,9 @@ class FakeMqttClient extends EventEmitter {
 
   subscribe(topic, options, callback) {
     this.subscriptions.push({ topic, options });
-    callback?.(this.subscribeErrors.shift() ?? null, [{ topic, qos: options?.qos ?? 0 }]);
+    callback?.(this.subscribeErrors.shift() ?? null, [
+      { topic, qos: options?.qos ?? 0 },
+    ]);
   }
 
   end(force, _options, callback) {
@@ -52,14 +59,21 @@ function makeConfig(overrides = {}) {
     rejectUnauthorized: true,
   };
   // Propagate top-level overrides into the source
-  if (overrides.topicFilter !== undefined) source.topicFilter = overrides.topicFilter;
-  if (overrides.reconnectPeriodMs !== undefined) source.reconnectPeriodMs = overrides.reconnectPeriodMs;
-  if (overrides.connectTimeoutMs !== undefined) source.connectTimeoutMs = overrides.connectTimeoutMs;
-  if (overrides.rejectUnauthorized !== undefined) source.rejectUnauthorized = overrides.rejectUnauthorized;
+  if (overrides.topicFilter !== undefined)
+    source.topicFilter = overrides.topicFilter;
+  if (overrides.reconnectPeriodMs !== undefined)
+    source.reconnectPeriodMs = overrides.reconnectPeriodMs;
+  if (overrides.connectTimeoutMs !== undefined)
+    source.connectTimeoutMs = overrides.connectTimeoutMs;
+  if (overrides.rejectUnauthorized !== undefined)
+    source.rejectUnauthorized = overrides.rejectUnauthorized;
   if (overrides.sourceUrl !== undefined) source.url = overrides.sourceUrl;
-  if (overrides.sourceUser !== undefined) source.username = overrides.sourceUser;
-  if (overrides.sourcePass !== undefined) source.password = overrides.sourcePass;
-  if (overrides.sourceClientId !== undefined) source.clientId = overrides.sourceClientId;
+  if (overrides.sourceUser !== undefined)
+    source.username = overrides.sourceUser;
+  if (overrides.sourcePass !== undefined)
+    source.password = overrides.sourcePass;
+  if (overrides.sourceClientId !== undefined)
+    source.clientId = overrides.sourceClientId;
   // Apply explicit source-level overrides
   if (overrides.sources?.[0]) {
     Object.assign(source, overrides.sources[0]);
@@ -73,14 +87,12 @@ function makeConfig(overrides = {}) {
     reconnectPeriodMs: source.reconnectPeriodMs,
     connectTimeoutMs: source.connectTimeoutMs,
     rejectUnauthorized: source.rejectUnauthorized,
-    tursoPath: ":memory:",
     mapUploader: {
       enabled: true,
       apiUrl: "https://map.meshcore.io/api/v1/uploader/node",
       dryRun: false,
       minReuploadIntervalSeconds: 3600,
       requestTimeoutMs: 10000,
-      maxConcurrentUploads: 2,
       maxQueuedUploads: 25,
       retriesAllowed: 3,
     },
@@ -94,9 +106,11 @@ test("loads runtime configuration from environment with production defaults", ()
   assert.equal(defaults.sourceUrl, "mqtt://localhost:1883");
   assert.equal(defaults.sourceClientId, "mqtt-to-meshcoreio-map");
   assert.equal(defaults.topicFilter, "meshcore/#");
-  assert.equal(defaults.tursoPath, "/data/mqtt-to-meshcoreio-map.turso");
   assert.equal(defaults.mapUploader.enabled, true);
-  assert.equal(defaults.mapUploader.apiUrl, "https://map.meshcore.io/api/v1/uploader/node");
+  assert.equal(
+    defaults.mapUploader.apiUrl,
+    "https://map.meshcore.io/api/v1/uploader/node",
+  );
 
   const configured = loadConfig({
     SOURCE_MQTT_URL: "mqtts://broker.example:8883",
@@ -105,10 +119,8 @@ test("loads runtime configuration from environment with production defaults", ()
     SOURCE_CLIENT_ID: "map-uploader",
     TOPIC_FILTER: "custom/#",
     SOURCE_REJECT_UNAUTHORIZED: "false",
-    TURSO_PATH: "/tmp/map.turso",
     MESHCOREIO_API_URL: "https://map.example/api",
     MESHCOREIO_DRY_RUN: "true",
-    MESHCOREIO_WORKERS: "4",
     MESHCOREIO_MAX_QUEUED_UPLOADS: "50",
     MESHCOREIO_RETRIES_ALLOWED: "5",
   });
@@ -119,20 +131,10 @@ test("loads runtime configuration from environment with production defaults", ()
   assert.equal(configured.sourceClientId, "map-uploader");
   assert.equal(configured.topicFilter, "custom/#");
   assert.equal(configured.rejectUnauthorized, false);
-  assert.equal(configured.tursoPath, "/tmp/map.turso");
   assert.equal(configured.mapUploader.apiUrl, "https://map.example/api");
   assert.equal(configured.mapUploader.dryRun, true);
-  assert.equal(configured.mapUploader.maxConcurrentUploads, 4);
   assert.equal(configured.mapUploader.maxQueuedUploads, 50);
   assert.equal(configured.mapUploader.retriesAllowed, 5);
-});
-
-test("uses the TURSO_PATH environment variable", () => {
-  const configured = loadConfig({
-    TURSO_PATH: "/tmp/map.turso",
-  });
-
-  assert.equal(configured.tursoPath, "/tmp/map.turso");
 });
 
 test("falls back for invalid numeric environment values", () => {
@@ -140,7 +142,6 @@ test("falls back for invalid numeric environment values", () => {
     MQTT_RECONNECT_PERIOD_MS: "-1",
     MQTT_CONNECT_TIMEOUT_MS: "0",
     MESHCOREIO_REQUEST_TIMEOUT_MS: "999999999",
-    MESHCOREIO_WORKERS: "0",
     MESHCOREIO_MAX_QUEUED_UPLOADS: "-5",
     MESHCOREIO_RETRIES_ALLOWED: "101",
   });
@@ -148,7 +149,6 @@ test("falls back for invalid numeric environment values", () => {
   assert.equal(configured.reconnectPeriodMs, 5000);
   assert.equal(configured.connectTimeoutMs, 30000);
   assert.equal(configured.mapUploader.requestTimeoutMs, 10000);
-  assert.equal(configured.mapUploader.maxConcurrentUploads, 1);
   assert.equal(configured.mapUploader.maxQueuedUploads, 25);
   assert.equal(configured.mapUploader.retriesAllowed, 3);
 });
@@ -156,11 +156,11 @@ test("falls back for invalid numeric environment values", () => {
 test("redacts credentials from source MQTT URLs before logging", () => {
   assert.equal(
     redactUrlCredentials("mqtts://user:secret@example.com:8883/path"),
-    "mqtts://redacted:redacted@example.com:8883/path"
+    "mqtts://redacted:redacted@example.com:8883/path",
   );
   assert.equal(
     redactUrlCredentials("mqtt://token@example.com"),
-    "mqtt://redacted@example.com"
+    "mqtt://redacted@example.com",
   );
 });
 
@@ -263,12 +263,82 @@ test("passes MQTT source messages to the map uploader", async () => {
   const source = clients[0];
   source.connectNow();
   await runtime.sourceSubscribed;
-  source.receive("meshcore/STO/node/raw", "{\"data\":\"11\"}");
+  source.receive("meshcore/STO/node/raw", '{"data":"11"}');
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(seen, [
-    { topic: "meshcore/STO/node/raw", payload: "{\"data\":\"11\"}" },
+    { topic: "meshcore/STO/node/raw", payload: '{"data":"11"}' },
   ]);
 
   await runtime.stop();
+});
+
+test("rejects an invalid MESHCOREIO_PRIVATE_KEY with a safe error", () => {
+  const original = process.env.MESHCOREIO_PRIVATE_KEY;
+  process.env.MESHCOREIO_PRIVATE_KEY =
+    "not-a-valid-key-value-at-all-0000000000000000000000000000";
+
+  try {
+    assert.throws(
+      () => startRuntime(makeConfig()),
+      /MESHCOREIO_PRIVATE_KEY is invalid/,
+    );
+  } finally {
+    if (original === undefined) {
+      delete process.env.MESHCOREIO_PRIVATE_KEY;
+    } else {
+      process.env.MESHCOREIO_PRIVATE_KEY = original;
+    }
+  }
+});
+
+test("a valid MESHCOREIO_PRIVATE_KEY logs its derived public key instead of an ephemeral one", async () => {
+  const original = process.env.MESHCOREIO_PRIVATE_KEY;
+  const seed = "77".repeat(32);
+  const expectedPublicKey = Buffer.from(
+    ed25519.getPublicKey(Buffer.from(seed, "hex")),
+  ).toString("hex");
+  process.env.MESHCOREIO_PRIVATE_KEY = seed;
+
+  const clients = [];
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => {
+    // eslint-disable-next-line no-control-regex -- intentional ANSI escape stripping
+    lines.push(args.join(" ").replace(/\x1b\[[0-9;]*m/g, ""));
+  };
+
+  try {
+    const runtime = startRuntime(makeConfig(), {
+      connect(url, options) {
+        const client = new FakeMqttClient(url, options);
+        clients.push(client);
+        return client;
+      },
+    });
+
+    clients[0].connectNow();
+    await runtime.sourceSubscribed;
+    await runtime.stop();
+  } finally {
+    console.log = originalLog;
+    if (original === undefined) {
+      delete process.env.MESHCOREIO_PRIVATE_KEY;
+    } else {
+      process.env.MESHCOREIO_PRIVATE_KEY = original;
+    }
+  }
+
+  assert.ok(
+    lines.some((line) =>
+      line.includes(
+        `Using MeshCore.io upload public key ${expectedPublicKey} from MESHCOREIO_PRIVATE_KEY`,
+      ),
+    ),
+  );
+  assert.equal(
+    lines.filter((line) => /ephemeral MeshCore.io upload public key/.test(line))
+      .length,
+    0,
+  );
 });

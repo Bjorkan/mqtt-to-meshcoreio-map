@@ -1,13 +1,9 @@
-import type { DashboardState } from "./dashboard/dashboard-state.js";
-import type { ObserverStatusStore } from "./persistence-store.js";
-
 export interface MapUploaderConfig {
   enabled: boolean;
   apiUrl: string;
   dryRun: boolean;
   minReuploadIntervalSeconds: number;
   requestTimeoutMs: number;
-  maxConcurrentUploads: number;
   maxQueuedUploads: number;
   retriesAllowed: number;
 }
@@ -18,12 +14,10 @@ export interface MapUploadSigningIdentity {
 }
 
 export interface MapUploaderDependencies {
-  dashboardState?: DashboardState;
   fetch?: typeof fetch;
   now?: () => number;
-  observerStatusStore?: ObserverStatusStore;
   signingIdentity?: MapUploadSigningIdentity;
-  workerDelay?: (ms: number) => Promise<void>;
+  uploadDelay?: (ms: number) => Promise<void>;
 }
 
 export interface RadioParams {
@@ -52,10 +46,7 @@ export interface SignedRequest {
 }
 
 export type MapApiResponseCode =
-  | "NODES_INSERTED"
-  | "ERR_ADVERT_DUPLICATE"
-  | "ERR_COORDS_MISSING"
-  | string;
+  "NODES_INSERTED" | "ERR_ADVERT_DUPLICATE" | "ERR_COORDS_MISSING" | string;
 
 export interface MapApiResponseBody {
   code?: MapApiResponseCode;
@@ -77,8 +68,6 @@ export interface MqttSourceConfig {
 
 export interface AdvertLogContext {
   advertLabel: string;
-  observerLabel: string;
-  sourceName?: string;
 }
 
 export interface MapUploadWorkRequest {
@@ -97,5 +86,10 @@ export interface MapUploadWorkRequest {
 }
 
 export type PosterResult =
-  | { status: "handled"; pubKey: string; timestamp: number; responseFromMeshcoreIO?: string }
+  | {
+      status: "handled";
+      pubKey: string;
+      timestamp: number;
+      responseFromMeshcoreIO?: string;
+    }
   | { status: "retry"; error: unknown };

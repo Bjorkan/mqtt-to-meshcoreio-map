@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { ed25519 } from "@noble/curves/ed25519.js";
-import { logMapUpload, warnMapUpload, trimLogBody } from "../map-log.js";
+import { logMapUpload, trimLogBody } from "../map-log.js";
 import {
   buildUploadParams,
-  formatMapApiSuccessLog,
+  formatMapApiOutcomeLog,
   hasValidParams,
   isTerminalMapApiResponse,
   parseMapApiResponse,
@@ -29,6 +29,49 @@ export function createMapUploadSigningIdentity(): MapUploadSigningIdentity {
   };
 }
 
+export function parseStaticSigningIdentity(
+  value: string | undefined,
+): MapUploadSigningIdentity | undefined {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed === "") {
+    return undefined;
+  }
+
+  if (!/^[0-9a-fA-F]{64}$/.test(trimmed)) {
+    throw new Error(
+      "MESHCOREIO_PRIVATE_KEY is invalid: expected a 64-character hex ed25519 private seed.",
+    );
+  }
+
+  try {
+    const privateSeed = Buffer.from(trimmed, "hex");
+    const identity = createMapUploadSigningIdentityFromSeed(privateSeed);
+
+    // Requested double-check: prove the seed can sign and the derived
+    // public key verifies within this runtime before trusting it.
+    const message = Buffer.from("mqtt-to-meshcoreio-map signing self-test");
+    const signature = Buffer.from(ed25519.sign(message, privateSeed));
+    if (!ed25519.verify(signature, message, identity.publicKey)) {
+      throw new Error("signature self-test failed");
+    }
+
+    return identity;
+  } catch {
+    throw new Error(
+      "MESHCOREIO_PRIVATE_KEY is invalid: the value could not be used as an ed25519 private seed.",
+    );
+  }
+}
+
+function createMapUploadSigningIdentityFromSeed(
+  privateSeed: Buffer,
+): MapUploadSigningIdentity {
+  return {
+    privateSeed,
+    publicKey: Buffer.from(ed25519.getPublicKey(privateSeed)),
+  };
+}
+
 export class MeshcoreioPoster {
   private readonly fetchImpl: typeof fetch;
   private readonly publicKey: Buffer;
@@ -38,21 +81,33 @@ export class MeshcoreioPoster {
 
   constructor(
     private readonly config: MapUploaderConfig,
-    dependencies: MeshcoreioPosterDependencies = {}
+    dependencies: MeshcoreioPosterDependencies = {},
   ) {
     this.fetchImpl = dependencies.fetch ?? fetch;
-    const signingIdentity = dependencies.signingIdentity ?? createMapUploadSigningIdentity();
+    const signingIdentity =
+      dependencies.signingIdentity ?? createMapUploadSigningIdentity();
+    if (
+      signingIdentity.privateSeed.length !== 32 ||
+      signingIdentity.publicKey.length !== 32
+    ) {
+      throw new Error(
+        "The MeshCore.io signing identity must contain 32-byte privateSeed and publicKey buffers.",
+      );
+    }
     this.publicKey = Buffer.from(signingIdentity.publicKey);
     this.privateSeed = Buffer.from(signingIdentity.privateSeed);
     this.publicKeyHex = this.publicKey.toString("hex");
     this.ready = Promise.resolve();
 
-    logMapUpload(`Using ephemeral MeshCore.io upload public key ${this.publicKeyHex}.`);
+    if (!dependencies.signingIdentity) {
+      logMapUpload(
+        `Using ephemeral MeshCore.io upload public key ${this.publicKeyHex}.`,
+      );
+    }
   }
 
   async post(job: MapUploadWorkRequest): Promise<PosterResult> {
     const {
-      advertKey,
       advertTimestamp,
       logContext,
       nodePublicKey,
@@ -62,8 +117,11 @@ export class MeshcoreioPoster {
 
     const params = buildUploadParams(radioParams);
     if (!hasValidParams(params)) {
-      this.logAdvertDrop(`params:${advertKey}`, `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is missing valid observer radio parameters. Dropping.`, "warn");
-      return { status: "handled", pubKey: nodePublicKey, timestamp: advertTimestamp };
+      return {
+        status: "handled",
+        pubKey: nodePublicKey,
+        timestamp: advertTimestamp,
+      };
     }
 
     try {
@@ -75,39 +133,52 @@ export class MeshcoreioPoster {
       const requestData = await this.signData(data);
 
       if (this.config.dryRun) {
-        logMapUpload(`Dry run enabled; would send advert for ${logContext.advertLabel} received by ${logContext.observerLabel} to meshcore.io.`);
-        return { status: "handled", pubKey: nodePublicKey, timestamp: advertTimestamp };
+        logMapUpload(
+          `Dry run: would send advert ${logContext.advertLabel} to meshcore.io.`,
+        );
+        return {
+          status: "handled",
+          pubKey: nodePublicKey,
+          timestamp: advertTimestamp,
+        };
       }
 
-      logMapUpload(`Advert for ${logContext.advertLabel} received by ${logContext.observerLabel}. Sending to meshcore.io.`);
-      const response = await this.postWithTimeout(requestData);
-      const responseText = trimLogBody(await response.text().catch(() => ""));
-      const mapResponse = parseMapApiResponse(responseText);
+      const { response, responseText } =
+        await this.postWithTimeout(requestData);
+      const rawResponseText = responseText;
+      const mapResponse = parseMapApiResponse(rawResponseText);
+      const loggedText = trimLogBody(rawResponseText);
 
       if (!response.ok && isTerminalMapApiResponse(mapResponse)) {
-        logMapUpload(formatMapApiSuccessLog(logContext, mapResponse, responseText));
-        return { status: "handled", pubKey: nodePublicKey, timestamp: advertTimestamp, responseFromMeshcoreIO: responseText };
+        logMapUpload(
+          formatMapApiOutcomeLog(logContext, mapResponse, loggedText),
+        );
+        return {
+          status: "handled",
+          pubKey: nodePublicKey,
+          timestamp: advertTimestamp,
+          responseFromMeshcoreIO: rawResponseText,
+        };
       }
 
       if (!response.ok) {
         return {
           status: "retry",
-          error: new Error(`meshcore.io responded ${response.status}${responseText ? `: ${responseText}` : ""}`),
+          error: new Error(
+            `meshcore.io responded ${response.status}${rawResponseText ? `: ${trimLogBody(rawResponseText)}` : ""}`,
+          ),
         };
       }
 
-      logMapUpload(formatMapApiSuccessLog(logContext, mapResponse, responseText));
-      return { status: "handled", pubKey: nodePublicKey, timestamp: advertTimestamp, responseFromMeshcoreIO: responseText };
+      logMapUpload(formatMapApiOutcomeLog(logContext, mapResponse, loggedText));
+      return {
+        status: "handled",
+        pubKey: nodePublicKey,
+        timestamp: advertTimestamp,
+        responseFromMeshcoreIO: rawResponseText,
+      };
     } catch (error: unknown) {
       return { status: "retry", error };
-    }
-  }
-
-  private logAdvertDrop(dropKey: string, message: string, level: "log" | "warn" = "log"): void {
-    if (level === "warn") {
-      warnMapUpload(message);
-    } else {
-      logMapUpload(message);
     }
   }
 
@@ -116,7 +187,9 @@ export class MeshcoreioPoster {
 
     const json = JSON.stringify(data);
     const hashHex = createHash("sha256").update(json).digest("hex");
-    const signature = Buffer.from(ed25519.sign(Buffer.from(hashHex, "hex"), this.privateSeed)).toString("hex");
+    const signature = Buffer.from(
+      ed25519.sign(Buffer.from(hashHex, "hex"), this.privateSeed),
+    ).toString("hex");
 
     return {
       data: json,
@@ -125,17 +198,26 @@ export class MeshcoreioPoster {
     };
   }
 
-  private async postWithTimeout(body: SignedRequest): Promise<Response> {
+  private async postWithTimeout(
+    body: SignedRequest,
+  ): Promise<{ response: Response; responseText: string }> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+    const timeout = setTimeout(
+      () => controller.abort(),
+      this.config.requestTimeoutMs,
+    );
 
     try {
-      return await this.fetchImpl(this.config.apiUrl, {
+      // The abort signal also covers the body read, so a server that stalls
+      // mid-response cannot wedge the single upload loop forever.
+      const response = await this.fetchImpl(this.config.apiUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
+      const responseText = await response.text();
+      return { response, responseText };
     } finally {
       clearTimeout(timeout);
     }

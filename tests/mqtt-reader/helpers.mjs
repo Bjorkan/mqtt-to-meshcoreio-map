@@ -1,12 +1,12 @@
-import { ed25519 } from '@noble/curves/ed25519.js';
+import { ed25519 } from "@noble/curves/ed25519.js";
 
-export const ADVERT_SEED = Buffer.from('22'.repeat(32), 'hex');
-export const SECOND_ADVERT_SEED = Buffer.from('23'.repeat(32), 'hex');
-export const THIRD_ADVERT_SEED = Buffer.from('24'.repeat(32), 'hex');
-export const FOURTH_ADVERT_SEED = Buffer.from('25'.repeat(32), 'hex');
-export const FIFTH_ADVERT_SEED = Buffer.from('26'.repeat(32), 'hex');
-export const OBSERVER_ID = 'a1'.repeat(32);
-export const API_URL = 'https://map.meshcore.io/api/v1/uploader/node';
+export const ADVERT_SEED = Buffer.from("22".repeat(32), "hex");
+export const SECOND_ADVERT_SEED = Buffer.from("23".repeat(32), "hex");
+export const THIRD_ADVERT_SEED = Buffer.from("24".repeat(32), "hex");
+export const FOURTH_ADVERT_SEED = Buffer.from("25".repeat(32), "hex");
+export const FIFTH_ADVERT_SEED = Buffer.from("26".repeat(32), "hex");
+export const OBSERVER_ID = "a1".repeat(32);
+export const API_URL = "https://map.meshcore.io/api/v1/uploader/node";
 
 export const advertTypes = {
   none: 0,
@@ -17,7 +17,7 @@ export const advertTypes = {
 };
 
 export function hex(bytes) {
-  return Buffer.from(bytes).toString('hex');
+  return Buffer.from(bytes).toString("hex");
 }
 
 function u32le(value) {
@@ -33,14 +33,17 @@ export function makeConfig(overrides = {}) {
     dryRun: false,
     minReuploadIntervalSeconds: 3600,
     requestTimeoutMs: 10000,
-    maxConcurrentUploads: 2,
     maxQueuedUploads: 25,
     retriesAllowed: 3,
     ...overrides,
   };
 }
 
-export function makeFetch({ ok = true, status = 200, text = '{"ok":true}' } = {}) {
+export function makeFetch({
+  ok = true,
+  status = 200,
+  text = '{"ok":true}',
+} = {}) {
   const requests = [];
   const fetch = async (url, init) => {
     requests.push({ url, init });
@@ -56,7 +59,7 @@ export function makeFetch({ ok = true, status = 200, text = '{"ok":true}' } = {}
 
 export function makeUploaderDependencies(overrides = {}) {
   return {
-    workerDelay: async () => {},
+    uploadDelay: async () => {},
     ...overrides,
   };
 }
@@ -64,14 +67,14 @@ export function makeUploaderDependencies(overrides = {}) {
 export function makeAdvertPacket({
   seed = ADVERT_SEED,
   timestamp = 1_800_000_000,
-  name = 'SE-STO-TEST',
+  name = "SE-STO-TEST",
   type = advertTypes.repeater,
   tamperSignature = false,
 }) {
   const publicKey = Buffer.from(ed25519.getPublicKey(seed));
   const appData = Buffer.concat([
     Buffer.from([0x80 | type]),
-    Buffer.from(name, 'utf8'),
+    Buffer.from(name, "utf8"),
   ]);
   const signed = Buffer.concat([publicKey, u32le(timestamp), appData]);
   const signature = Buffer.from(ed25519.sign(signed, seed));
@@ -79,24 +82,31 @@ export function makeAdvertPacket({
     signature[0] ^= 0xff;
   }
 
-  const payload = Buffer.concat([publicKey, u32le(timestamp), signature, appData]);
-  return Buffer.concat([
-    Buffer.from([(0x04 << 2) | 0x01, 0x00]),
-    payload,
+  const payload = Buffer.concat([
+    publicKey,
+    u32le(timestamp),
+    signature,
+    appData,
   ]);
+  return Buffer.concat([Buffer.from([(0x04 << 2) | 0x01, 0x00]), payload]);
 }
 
 export function statusPayload(overrides = {}) {
-  return Buffer.from(JSON.stringify({
-    origin: 'SE-STO-OBSERVER',
-    origin_id: OBSERVER_ID,
-    radio: '869.617981,62.5,8,8',
-    ...overrides,
-  }));
+  return Buffer.from(
+    JSON.stringify({
+      origin: "SE-STO-OBSERVER",
+      origin_id: OBSERVER_ID,
+      radio: "869.617981,62.5,8,8",
+      ...overrides,
+    }),
+  );
 }
 
 export async function rememberDefaultStatus(uploader) {
-  await uploader.processMqttMessage(`meshcore/STO/${OBSERVER_ID}/status`, statusPayload());
+  await uploader.processMqttMessage(
+    `meshcore/STO/${OBSERVER_ID}/status`,
+    statusPayload(),
+  );
 }
 
 export function signedRequestData(requests) {
@@ -105,14 +115,15 @@ export function signedRequestData(requests) {
 }
 
 function stripAnsi(value) {
-  return value.replace(/\x1b\[[0-9;]+m/g, '');
+  // eslint-disable-next-line no-control-regex -- intentional ANSI escape matching
+  return value.replace(/\x1b\[[0-9;]+m/g, "");
 }
 
 export async function captureConsoleLog(fn) {
   const originalLog = console.log;
   const lines = [];
   console.log = (...args) => {
-    lines.push(stripAnsi(args.join(' ')));
+    lines.push(stripAnsi(args.join(" ")));
   };
 
   try {
@@ -129,7 +140,7 @@ export async function captureConsoleOutput(fn) {
   const originalWarn = console.warn;
   const lines = [];
   const capture = (...args) => {
-    lines.push(stripAnsi(args.join(' ')));
+    lines.push(stripAnsi(args.join(" ")));
   };
   console.log = capture;
   console.warn = capture;

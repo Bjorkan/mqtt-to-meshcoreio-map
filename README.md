@@ -14,15 +14,15 @@ The service consumes MQTT observer messages, validates MeshCore packet data, sig
 - Verifies MeshCore advert signatures.
 - Uploads only `REPEATER`, `ROOM`, and `SENSOR` adverts.
 - Skips chat adverts, invalid packets, stale replays, and too-frequent reuploads.
-- Generates a new ephemeral MeshCore.io upload identity for each worker on each start.
+- Signs every upload with one MeshCore.io identity: ephemeral per start by default, or a fixed identity via `MESHCOREIO_PRIVATE_KEY`.
 - Logs generated public keys, but never logs private keys.
-- Can expose an optional read-only dashboard with queue state, worker state, and accepted MeshCore.io advert coordinates from the last 24 hours.
+- Logs exactly one line per meshcore.io exchange: which advert was sent and how the server responded.
 
 Internally this is split into three responsibilities:
 
 - MQTT broker reader: connects to the source broker, validates adverts, deduplicates repeated observations, and attaches observer radio settings.
-- Posting queue: accepts advert jobs, keeps duplicate nodes out of the queue, reports queue position, and requeues connection failures at the back.
-- MeshCore.io poster: drains the queue with one or more workers, signs each request with that worker's ephemeral keypair, posts to MeshCore.io, and treats terminal server responses as handled.
+- Posting queue: accepts advert jobs, keeps duplicate nodes out of the queue, and requeues connection failures at the back.
+- MeshCore.io poster: drains the queue sequentially (one upload at a time with a short pacing delay), signs each request with the service's signing identity, posts to MeshCore.io, and treats terminal server responses as handled.
 
 ## Configuration
 
@@ -35,50 +35,23 @@ SOURCE_MQTT_PASSWORD=
 TOPIC_FILTER=meshcore/#
 ```
 
-The service creates a fresh MeshCore.io signing identity for each worker every time it starts. Public keys are written to the logs so you can see which uploader identities are being used for that run. Private keys are generated in memory only and are not logged.
+By default the service generates a fresh ephemeral MeshCore.io signing identity at every start and writes its public key to the logs. Set `MESHCOREIO_PRIVATE_KEY` to a 64-character hex ed25519 private seed to use a stable identity across restarts instead; invalid values abort startup. Private keys are kept in memory only and are never logged.
 
 The MQTT source should publish observer `status` messages and MeshCore packet messages on `raw` or `packets` topics. For the expected message formats, conversion flow, signing details, and MeshCore.io request shape, see [TECHNICAL.md](TECHNICAL.md).
 
 Important runtime settings:
 
-- `MESHCOREIO_WORKERS`: number of upload workers draining the global advert upload queue. Default: `1`.
-- `MESHCOREIO_DRY_RUN`: run the full reader and queue flow but prevent workers from posting to MeshCore.io. Default: `false`.
-- `MESHCOREIO_MAX_QUEUED_UPLOADS`: maximum number of queued upload requests waiting for a worker. Default: `25`.
+- `MESHCOREIO_PRIVATE_KEY`: optional fixed ed25519 signing seed (64 hex characters) for a stable uploader identity. Unset by default.
+- `MESHCOREIO_DRY_RUN`: run the full reader and queue flow but do not post to MeshCore.io. Default: `false`.
+- `MESHCOREIO_MAX_QUEUED_UPLOADS`: maximum number of queued upload requests waiting for the poster. Default: `25`.
 - `MESHCOREIO_RETRIES_ALLOWED`: retry budget placed on each new queue work request. Default: `3`.
-- `MESHCOREIO_REQUEST_TIMEOUT_MS`: HTTP timeout for MeshCore.io requests. Default: `10000`.
+- `MESHCOREIO_REQUEST_TIMEOUT_MS`: HTTP timeout for MeshCore.io requests, covering the response body read. Default: `10000`.
 - `MESHCOREIO_MIN_REUPLOAD_SECONDS`: minimum accepted advert timestamp gap per advertised node. Default: `3600`.
-- `TZ`: time zone used for service log timestamps and dashboard-rendered timestamps, for example `Europe/Stockholm`.
-- `TURSO_PATH`: Turso database path for observer radio status and dashboard MeshCore.io response history. Default: `/data/mqtt-to-meshcoreio-map.turso`.
-- `ENABLE_DASHBOARD`: enable the read-only dashboard. Default: `false`.
-- `DASHBOARD_PORT`: internal dashboard listen port. Default: `80`.
+- `TZ`: time zone used for service log timestamps, for example `Europe/Stockholm`.
 
-Each worker creates its own ephemeral MeshCore.io signing identity at startup. In dry-run mode, workers still drain and validate queue work but do not make the final HTTP request to MeshCore.io. Failed MeshCore.io upload attempts are placed at the back of the global queue with one retry removed from the request. After each upload job, the worker waits 5 seconds before taking another queued request. If the queue is full or the request has no retries left, the request is dropped.
+Uploads are drained strictly one at a time; after each upload the poster waits 5 seconds before taking the next queued request. Failed attempts go to the back of the queue with one retry removed and are silent unless the retry budget is exhausted, which produces a single warning. If the queue is full, new requests are dropped with a warning. Multiple observers hearing the same advert produce at most one upload and one log line.
 
-Numeric environment variables are range-checked. Invalid, negative, zero-where-not-allowed, or unreasonably large values fall back to safe defaults.
-
-In Docker, observer radio statuses and dashboard MeshCore.io response history are stored in Turso at `/data/mqtt-to-meshcoreio-map.turso`. Keep `/data` mounted as a writable volume when `read_only: true` is enabled, or set `TURSO_PATH` to another writable database path.
-
-## Dashboard
-
-Set `ENABLE_DASHBOARD=true` to serve a small read-only dashboard from the same process. The dashboard shows:
-
-- Current queued and active advert upload jobs, with clickable JSON details.
-- The latest 100 adverts that received a MeshCore.io response.
-- Worker state and the job each worker is handling.
-- A read-only OpenStreetMap view for all `NODES_INSERTED` adverts with lat/lon from the last 24 hours.
-
-The browser renders the dashboard from a single read-only JSON endpoint at `/api`.
-MeshCore node-type SVG icons are vendored locally in `src/dashboard/assets/node_types/` from
-`meshcore-dev/map.meshcore.io` (MIT license).
-
-In Docker Compose, publish the internal dashboard port `80` to host port `6543`:
-
-```yaml
-ports:
-  - "6543:80"
-```
-
-Then open `http://localhost:6543`.
+Numeric environment variables are range-checked. Invalid or unreasonably large values fall back to safe defaults.
 
 ## Deployment
 
@@ -100,6 +73,21 @@ SOURCE_MQTT_PASSWORD=
 TOPIC_FILTER=meshcore/#
 ```
 
+### Multiple MQTT Sources
+
+For several brokers, use numbered variables instead — each source gets its own connection, client ID, and topic filter:
+
+```env
+SOURCE_1_NAME=Primary Broker
+SOURCE_1_MQTT_URL=mqtt://broker1.example:1883
+SOURCE_1_MQTT_USERNAME=user1
+SOURCE_1_MQTT_PASSWORD=pass1
+SOURCE_2_NAME=Secondary Broker
+SOURCE_2_MQTT_URL=mqtt://broker2.example:1883
+```
+
+Sources must be numbered starting at `SOURCE_1` without gaps. `SOURCE_N_RECONNECT_PERIOD_MS`, `SOURCE_N_CONNECT_TIMEOUT_MS`, and `SOURCE_N_REJECT_UNAUTHORIZED` override the global defaults per source. See `.env.example` for the full list.
+
 `SOURCE_MQTT_URL` is passed to MQTT.js and can use standard MQTT URL schemes:
 
 ```env
@@ -119,7 +107,7 @@ Start the bridge:
 docker compose up -d
 ```
 
-The Compose example uses the published GitHub Container Registry image, sets `LOG_COLOR=false`, enables log rotation, applies basic container hardening, and uses a conservative `MESHCOREIO_WORKERS=1`.
+The Compose example uses the published GitHub Container Registry image, sets `LOG_COLOR=false`, enables log rotation, and applies basic container hardening. The service is fully in-memory and needs no writable volume, so the example runs with `read_only: true`.
 
 Images are published to both `ghcr.io/bjorkan/mqtt-to-meshcoreio-map` and `bjorkan/mqtt-to-meshcoreio-map` on Docker Hub. The `edge` tag tracks the latest push to `main`; the `latest` tag tracks the latest published GitHub release.
 
@@ -135,11 +123,25 @@ docker run --rm \
   ghcr.io/bjorkan/mqtt-to-meshcoreio-map:latest
 ```
 
+## Removed Environment Variables
+
+These variables from older releases are no longer read and can be removed from your environment:
+
+- `MESHCOREIO_WORKERS` — uploads always run one at a time now.
+- `ENABLE_DASHBOARD`, `DASHBOARD_PORT`, `DASHBOARD_DEMO_ADVERTS` — the web dashboard was removed.
+- `TURSO_PATH`, `SQLITE_PATH` — the database was removed; state is memory-only.
+
+Note that observer radio parameters are memory-only as well: after a restart they are empty until each observer publishes a new `status` message.
+
 ## Development
 
+The project runs on [Bun](https://bun.sh):
+
 ```bash
-npm install
-npm run build
-npm test
+bun install
+bun run typecheck
+bun test
+bun run lint
+bun run format
 docker build -t mqtt-to-meshcoreio-map .
 ```

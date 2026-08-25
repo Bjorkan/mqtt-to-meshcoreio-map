@@ -57,11 +57,9 @@ The radio settings can also be provided as direct fields:
 
 Frequency may arrive as MHz, kHz, or Hz. Bandwidth may arrive as kHz or Hz. The uploader normalizes these to MHz and kHz before sending to MeshCore.io.
 
-Set `TZ` to an IANA time zone such as `Europe/Stockholm` to format service log timestamps and dashboard-rendered timestamps in that time zone.
+Set `TZ` to an IANA time zone such as `Europe/Stockholm` to format service log timestamps in that time zone.
 
-Only the latest valid status for each observer is kept. Invalid, offline, or incomplete status messages do not overwrite the latest valid radio parameters. Observer status older than one hour is dropped. Valid observer statuses are also stored in Turso at `TURSO_PATH`, which defaults to `/data/mqtt-to-meshcoreio-map.turso`, and loaded again after restart.
-
-Dashboard history for adverts that received a MeshCore.io server response is also stored in the same Turso database. The stored response can be any MeshCore.io response body, such as `NODES_INSERTED`, `ERR_ADVERT_DUPLICATE`, or `ERR_COORDS_MISSING`; entries without a MeshCore.io response are not persisted. Stored dashboard history older than 24 hours is removed. The dashboard history list exposes the newest 100 entries, while the map exposes every stored 24-hour `NODES_INSERTED` advert that has coordinates.
+Only the latest valid status for each observer is kept. Invalid, offline, or incomplete status messages do not overwrite the latest valid radio parameters. Observer status older than 24 hours is dropped. Observer state is memory-only: after a restart it is empty until each observer publishes a new `status` message.
 
 ## Packet Messages
 
@@ -107,7 +105,7 @@ The request body is signed and has this shape:
 }
 ```
 
-`data` is a JSON string, not a nested JSON object. The `signature` is an Ed25519 signature over the SHA-256 hash of that string. The `publicKey` is the generated ephemeral upload public key for the worker handling that request.
+`data` is a JSON string, not a nested JSON object. The `signature` is an Ed25519 signature over the SHA-256 hash of that string. The `publicKey` is the service's upload identity: ephemeral per start by default, or derived from `MESHCOREIO_PRIVATE_KEY` when set.
 
 ## Runtime Responsibilities
 
@@ -138,25 +136,32 @@ The runtime is divided into three responsibilities:
        "cr": 8
      },
      "logContext": {
-       "advertLabel": "SE-STO-TEST (a09aa5)",
-       "observerLabel": "SE-STO-OBSERVER"
+       "advertLabel": "SE-STO-TEST (a09aa5)"
      }
    }
    ```
 
 2. Posting queue
 
-   The queue receives work requests from the reader. It keeps at most one queued or active advert per advertised node, enforces `MESHCOREIO_MAX_QUEUED_UPLOADS`, and logs accepted work in this shape:
+   The queue receives work requests from the reader. It keeps at most one queued or active advert per advertised node and enforces `MESHCOREIO_MAX_QUEUED_UPLOADS`. Registering work is silent; when the queue is full, a warning is logged and the request is dropped.
 
-   ```text
-   Advert from NAME heard by OBSERVERNAME registered to posting queue. Place in queue 5.
-   ```
-
-   Connection and non-terminal upload failures are placed at the back of the queue with `retriesAllowed` reduced by one. If the queue receives a request where `retriesAllowed` is `0`, it logs that no retries are left and drops the request.
+   Connection and non-terminal upload failures are placed at the back of the queue with `retriesAllowed` reduced by one, without logging. When the retry budget reaches zero, exactly one warning is logged (`Advert <label> dropped after N attempts: <reason>`) and the request is dropped.
 
 3. MeshCore.io poster
 
-   The poster drains the queue. One poster worker is created per `MESHCOREIO_WORKERS` value, defaulting to one worker. Each worker gets its own ephemeral MeshCore.io keypair at startup. The poster converts the plain queue work request into MeshCore.io's signed request format, sends it to the configured API URL, and classifies responses. With `MESHCOREIO_DRY_RUN=true`, the poster stops after conversion/signing and marks the work handled without making the HTTP request. Inserted, duplicate, and coordinates-missing responses are considered handled from this bridge's perspective. Connection failures and non-terminal HTTP/server errors are returned to the queue for retry.
+   The poster drains the queue sequentially: one upload at a time, with a 5 second pacing delay between uploads while more work is pending. It converts the plain queue work request into MeshCore.io's signed request format, sends it to the configured API URL, and classifies responses. With `MESHCOREIO_DRY_RUN=true`, the poster stops after conversion/signing and marks the work handled without making the HTTP request. Inserted, duplicate, and coordinates-missing responses are considered handled from this bridge's perspective. Connection failures and non-terminal HTTP/server errors are returned to the queue for retry.
+
+## Logging
+
+The advert pipeline logs exactly one line per actual meshcore.io exchange:
+
+```text
+Advert SE-STO-TEST (a09aa5) sent to meshcore.io: NODES_INSERTED
+```
+
+Known terminal responses get a short explanation (`ERR_ADVERT_DUPLICATE – node was updated recently`, `ERR_COORDS_MISSING – map coordinates are missing`); other responses log the response code or the raw body. In dry-run mode the line reads `Dry run: would send advert ...` instead.
+
+Everything else in the pipeline is silent: dropped adverts (wrong type, bad signature, missing radio parameters, replays, cooldown, reupload interval), retry attempts, and queue registrations. Operational events are still logged: startup public keys, MQTT connect/offline problems, a full upload queue, and the single warning emitted when a job exhausts its retries. Because only the first valid copy of an advert is ever queued, several observers hearing the same advert produce at most one outcome line.
 
 ## Conversion Flow
 
@@ -171,12 +176,12 @@ The runtime is divided into three responsibilities:
 9. Put work requests through a bounded global posting queue.
 10. Skip stale adverts, duplicate queued or in-flight nodes, too-frequent reuploads, and adverts without complete valid radio parameters.
 11. Build MeshCore.io upload data with normalized radio params and a `meshcore://...` link containing the original packet bytes.
-12. Sign the upload with the worker's in-memory ephemeral private key.
+12. Sign the upload with the service's in-memory private key (ephemeral per start, or fixed via `MESHCOREIO_PRIVATE_KEY`).
 13. POST the signed request to MeshCore.io and log the API result.
 14. Treat terminal MeshCore.io API responses, such as inserted, duplicate, or coordinates-missing responses, as handled and remove them from the queue.
 15. Retry failed upload attempts by reducing `retriesAllowed` and placing the advert at the back of the global queue until no retries remain.
-16. Wait 5 seconds after each upload job before that worker takes the next queued request.
+16. Wait 5 seconds between uploads while more queued work remains.
 
-Deduplication, replay protection, queued uploads, in-flight uploads, and retry state are kept in memory. Observer radio state is kept in memory and persisted in Turso at `TURSO_PATH` when that path is writable; rows older than one hour are removed. Dashboard history for adverts that received a MeshCore.io response is persisted in the same Turso database for 24 hours. A service restart starts with an empty local deduplication cache; MeshCore.io may still apply its own duplicate handling.
+Deduplication, replay protection, queued uploads, in-flight uploads, retry state, and observer radio state are all kept in memory only. A service restart starts with empty caches; observers repopulate their radio parameters with their next `status` publish, and MeshCore.io may still apply its own duplicate handling.
 
 If the same advert is heard by multiple observers, the bridge uploads the first accepted copy for that advertised node/timestamp. Later copies with different observer radio data may be skipped by duplicate and reupload protection.

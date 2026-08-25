@@ -26,17 +26,25 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 24.16.0
-          cache: npm
+          bun-version: 1.4.0
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Check formatting
+        run: bun run format:check
+
+      - name: Typecheck
+        run: bun run typecheck
 
       - name: Run tests
-        run: npm test
+        run: bun test
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -57,14 +65,13 @@ jobs:
         run: |
           set -euo pipefail
           container_id="$(docker run -d --rm \
-            -p 127.0.0.1:8080:80 \
-            -e ENABLE_DASHBOARD=true \
             -e SOURCE_MQTT_URL=mqtt://127.0.0.1:9 \
             mqtt-to-meshcoreio-map:smoke)"
           trap 'docker stop "$container_id" >/dev/null' EXIT
 
           for _ in {1..30}; do
-            if curl --fail --silent --show-error http://127.0.0.1:8080/healthz | grep -qx ok; then
+            if docker logs "$container_id" 2>&1 | grep -Eq 'upload public key [0-9a-f]{64}' \
+              && [ "$(docker inspect -f '{{.State.Running}}' "$container_id")" = "true" ]; then
               exit 0
             fi
             sleep 1
@@ -101,6 +108,8 @@ jobs:
           tags: |
             type=raw,value=edge,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'release' }}
           labels: |
             org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}
           annotations: |

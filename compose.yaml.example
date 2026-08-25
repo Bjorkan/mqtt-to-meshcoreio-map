@@ -5,11 +5,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    #ports:
-    #  - "6543:80"
-    volumes:
-      # Required when read_only is true, because Turso needs a writable directory.
-      - mqtt-to-meshcoreio-map-data:/data:rw
+    environment:
+      - LOG_COLOR=false
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -20,6 +17,3 @@ services:
       options:
         max-size: 10m
         max-file: "3"
-
-volumes:
-  mqtt-to-meshcoreio-map-data:
