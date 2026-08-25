@@ -7,6 +7,7 @@ import {
   createMapUploadSigningIdentity,
   MeshcoreMapUploader,
   MeshcoreioPoster,
+  parseStaticSigningIdentity,
 } from '../../dist/map-uploader.js';
 import {
   ADVERT_SEED,
@@ -161,4 +162,63 @@ test('creates a fresh upload identity for each test helper call', () => {
   assert.match(hex(first.privateSeed), /^[0-9a-f]{64}$/);
   assert.notEqual(hex(first.publicKey), hex(second.publicKey));
   assert.notEqual(hex(first.privateSeed), hex(second.privateSeed));
+});
+
+test('parses a valid MESHCOREIO_PRIVATE_KEY into the matching signing identity', () => {
+  const seed = Buffer.from('42'.repeat(32), 'hex');
+  const identity = parseStaticSigningIdentity(hex(seed));
+
+  assert.deepEqual(identity, {
+    privateSeed: seed,
+    publicKey: Buffer.from(ed25519.getPublicKey(seed)),
+  });
+});
+
+test('treats an unset or blank MESHCOREIO_PRIVATE_KEY as ephemeral mode', () => {
+  assert.equal(parseStaticSigningIdentity(undefined), undefined);
+  assert.equal(parseStaticSigningIdentity(''), undefined);
+  assert.equal(parseStaticSigningIdentity('   '), undefined);
+});
+
+test('rejects invalid MESHCOREIO_PRIVATE_KEY values without echoing them', () => {
+  for (const value of [
+    'zz'.repeat(32),
+    '42'.repeat(31),
+    '42'.repeat(33),
+    `${'42'.repeat(32)}\nDROP TABLE`,
+  ]) {
+    assert.throws(
+      () => parseStaticSigningIdentity(value),
+      (error) => {
+        assert.match(error.message, /MESHCOREIO_PRIVATE_KEY is invalid/);
+        assert.equal(error.message.includes(value), false);
+        return true;
+      }
+    );
+  }
+});
+
+test('a static private key signs uploads with its derived public key and logs it once', async () => {
+  const seed = Buffer.from('77'.repeat(32), 'hex');
+  const expectedPublicKey = hex(Buffer.from(ed25519.getPublicKey(seed)));
+  const { fetch, requests } = makeFetch({ text: '{"code":"NODES_INSERTED"}' });
+  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
+    fetch,
+    signingIdentity: { privateSeed: seed, publicKey: Buffer.from(ed25519.getPublicKey(seed)) },
+  }));
+  await rememberDefaultStatus(uploader);
+
+  const logs = await captureConsoleOutput(async () => {
+    await uploader.processMqttMessage(
+      `meshcore/STO/${OBSERVER_ID}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_300_000 })) }))
+    );
+  });
+
+  const requestBody = JSON.parse(requests[0].init.body);
+  assert.equal(requestBody.publicKey, expectedPublicKey);
+  assert.deepEqual(logs.filter((line) => /upload public key/.test(line)), []);
+
+  const outcomeLine = logs.at(-1);
+  assert.match(outcomeLine, /sent to meshcore\.io: NODES_INSERTED/);
 });

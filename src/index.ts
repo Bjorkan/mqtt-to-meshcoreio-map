@@ -2,6 +2,7 @@ import mqtt, { type IClientOptions, type MqttClient } from "mqtt";
 import {
   formatMapUploadLogLine,
   MeshcoreMapUploader,
+  parseStaticSigningIdentity,
   type MapUploaderConfig,
 } from "./map-uploader.js";
 import type { MqttSourceConfig } from "./map-types.js";
@@ -221,8 +222,19 @@ export function startRuntime(
   config: RuntimeConfig,
   dependencies: RuntimeDependencies = {},
 ): Runtime {
+  const staticSigningIdentity = dependencies.mapUploader
+    ? undefined
+    : parseStaticSigningIdentity(process.env.MESHCOREIO_PRIVATE_KEY);
+  if (staticSigningIdentity) {
+    log(
+      `Using MeshCore.io upload public key ${staticSigningIdentity.publicKey.toString("hex")} from MESHCOREIO_PRIVATE_KEY.`,
+    );
+  }
   const uploader =
-    dependencies.mapUploader ?? new MeshcoreMapUploader(config.mapUploader, {});
+    dependencies.mapUploader ??
+    new MeshcoreMapUploader(config.mapUploader, {
+      signingIdentity: staticSigningIdentity,
+    });
   const ready = (uploader.ready ?? Promise.resolve()).then(() => undefined);
   ready.catch((error: Error) => {
     warn(`Runtime dependencies failed to initialize: ${error.message}.`);
@@ -250,14 +262,16 @@ export function startRuntime(
     const sourceName = source.name;
 
     client.on("connect", () => {
-      log(        `[${sourceName}] Connected to MQTT source ${safeUrl}.`);
+      log(`[${sourceName}] Connected to MQTT source ${safeUrl}.`);
       client.subscribe(source.topicFilter, { qos: 0 }, (error) => {
         if (error) {
           if (!firstSubscribeAttemptSettled) {
             firstSubscribeAttemptSettled = true;
             rejectFirstSubscribeAttempt(error);
           }
-          warn(            `[${sourceName}] Failed to subscribe to ${source.topicFilter}: ${error.message}`);
+          warn(
+            `[${sourceName}] Failed to subscribe to ${source.topicFilter}: ${error.message}`,
+          );
           return;
         }
 
@@ -269,7 +283,7 @@ export function startRuntime(
           subscribedResolved = true;
           resolveSubscribed();
         }
-        log(          `[${sourceName}] Subscribed to ${source.topicFilter}.`);
+        log(`[${sourceName}] Subscribed to ${source.topicFilter}.`);
       });
     });
 
@@ -279,7 +293,9 @@ export function startRuntime(
           uploader.handleMqttMessage(topic, Buffer.from(payload), sourceName),
         )
         .catch((error: Error) => {
-          warn(            `[${sourceName}] Map upload handling failed for ${topic}: ${error.message}`);
+          warn(
+            `[${sourceName}] Map upload handling failed for ${topic}: ${error.message}`,
+          );
         });
     });
 

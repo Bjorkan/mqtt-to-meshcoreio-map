@@ -29,6 +29,49 @@ export function createMapUploadSigningIdentity(): MapUploadSigningIdentity {
   };
 }
 
+export function parseStaticSigningIdentity(
+  value: string | undefined,
+): MapUploadSigningIdentity | undefined {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed === "") {
+    return undefined;
+  }
+
+  if (!/^[0-9a-fA-F]{64}$/.test(trimmed)) {
+    throw new Error(
+      "MESHCOREIO_PRIVATE_KEY is invalid: expected a 64-character hex ed25519 private seed.",
+    );
+  }
+
+  try {
+    const privateSeed = Buffer.from(trimmed, "hex");
+    const identity = createMapUploadSigningIdentityFromSeed(privateSeed);
+
+    // Requested double-check: prove the seed can sign and the derived
+    // public key verifies within this runtime before trusting it.
+    const message = Buffer.from("mqtt-to-meshcoreio-map signing self-test");
+    const signature = Buffer.from(ed25519.sign(message, privateSeed));
+    if (!ed25519.verify(signature, message, identity.publicKey)) {
+      throw new Error("signature self-test failed");
+    }
+
+    return identity;
+  } catch {
+    throw new Error(
+      "MESHCOREIO_PRIVATE_KEY is invalid: the value could not be used as an ed25519 private seed.",
+    );
+  }
+}
+
+function createMapUploadSigningIdentityFromSeed(
+  privateSeed: Buffer,
+): MapUploadSigningIdentity {
+  return {
+    privateSeed,
+    publicKey: Buffer.from(ed25519.getPublicKey(privateSeed)),
+  };
+}
+
 export class MeshcoreioPoster {
   private readonly fetchImpl: typeof fetch;
   private readonly publicKey: Buffer;
@@ -48,9 +91,11 @@ export class MeshcoreioPoster {
     this.publicKeyHex = this.publicKey.toString("hex");
     this.ready = Promise.resolve();
 
-    logMapUpload(
-      `Using ephemeral MeshCore.io upload public key ${this.publicKeyHex}.`,
-    );
+    if (!dependencies.signingIdentity) {
+      logMapUpload(
+        `Using ephemeral MeshCore.io upload public key ${this.publicKeyHex}.`,
+      );
+    }
   }
 
   async post(job: MapUploadWorkRequest): Promise<PosterResult> {
@@ -96,7 +141,9 @@ export class MeshcoreioPoster {
       const loggedText = trimLogBody(rawResponseText);
 
       if (!response.ok && isTerminalMapApiResponse(mapResponse)) {
-        logMapUpload(formatMapApiOutcomeLog(logContext, mapResponse, loggedText));
+        logMapUpload(
+          formatMapApiOutcomeLog(logContext, mapResponse, loggedText),
+        );
         return {
           status: "handled",
           pubKey: nodePublicKey,

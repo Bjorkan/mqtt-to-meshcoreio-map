@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { test } from "node:test";
 
 import { loadConfig, redactUrlCredentials, startRuntime } from "../../dist/index.js";
+import { ed25519 } from "@noble/curves/ed25519.js";
 
 class FakeMqttClient extends EventEmitter {
   constructor(url, options) {
@@ -259,4 +260,66 @@ test("passes MQTT source messages to the map uploader", async () => {
   ]);
 
   await runtime.stop();
+});
+
+test("rejects an invalid MESHCOREIO_PRIVATE_KEY with a safe error", () => {
+  const original = process.env.MESHCOREIO_PRIVATE_KEY;
+  process.env.MESHCOREIO_PRIVATE_KEY = "not-a-valid-key-value-at-all-0000000000000000000000000000";
+
+  try {
+    assert.throws(
+      () => startRuntime(makeConfig()),
+      /MESHCOREIO_PRIVATE_KEY is invalid/
+    );
+  } finally {
+    if (original === undefined) {
+      delete process.env.MESHCOREIO_PRIVATE_KEY;
+    } else {
+      process.env.MESHCOREIO_PRIVATE_KEY = original;
+    }
+  }
+});
+
+test("a valid MESHCOREIO_PRIVATE_KEY logs its derived public key instead of an ephemeral one", async () => {
+  const original = process.env.MESHCOREIO_PRIVATE_KEY;
+  const seed = "77".repeat(32);
+  const expectedPublicKey = Buffer.from(
+    ed25519.getPublicKey(Buffer.from(seed, "hex"))
+  ).toString("hex");
+  process.env.MESHCOREIO_PRIVATE_KEY = seed;
+
+  const clients = [];
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => {
+    lines.push(args.join(" ").replace(/\x1b\[[0-9;]*m/g, ""));
+  };
+
+  try {
+    const runtime = startRuntime(makeConfig(), {
+      connect(url, options) {
+        const client = new FakeMqttClient(url, options);
+        clients.push(client);
+        return client;
+      },
+    });
+
+    clients[0].connectNow();
+    await runtime.sourceSubscribed;
+    await runtime.stop();
+  } finally {
+    console.log = originalLog;
+    if (original === undefined) {
+      delete process.env.MESHCOREIO_PRIVATE_KEY;
+    } else {
+      process.env.MESHCOREIO_PRIVATE_KEY = original;
+    }
+  }
+
+  assert.ok(
+    lines.some((line) =>
+      line.includes(`Using MeshCore.io upload public key ${expectedPublicKey} from MESHCOREIO_PRIVATE_KEY`)
+    )
+  );
+  assert.equal(lines.filter((line) => /ephemeral MeshCore.io upload public key/.test(line)).length, 0);
 });
