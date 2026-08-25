@@ -73,6 +73,21 @@ SOURCE_MQTT_PASSWORD=
 TOPIC_FILTER=meshcore/#
 ```
 
+### Multiple MQTT Sources
+
+For several brokers, use numbered variables instead — each source gets its own connection, client ID, and topic filter:
+
+```env
+SOURCE_1_NAME=Primary Broker
+SOURCE_1_MQTT_URL=mqtt://broker1.example:1883
+SOURCE_1_MQTT_USERNAME=user1
+SOURCE_1_MQTT_PASSWORD=pass1
+SOURCE_2_NAME=Secondary Broker
+SOURCE_2_MQTT_URL=mqtt://broker2.example:1883
+```
+
+`SOURCE_N_RECONNECT_PERIOD_MS`, `SOURCE_N_CONNECT_TIMEOUT_MS`, and `SOURCE_N_REJECT_UNAUTHORIZED` override the global defaults per source. See `.env.example` for the full list.
+
 `SOURCE_MQTT_URL` is passed to MQTT.js and can use standard MQTT URL schemes:
 
 ```env

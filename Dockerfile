@@ -1,4 +1,4 @@
-FROM oven/bun:1-slim
+FROM oven/bun:1.4.0-slim
 
 LABEL org.opencontainers.image.description="MQTT to MeshCore.io Map bridge that listens to a MeshCore MQTT broker and uploads verified MeshCore adverts to the MeshCore.io map."
 

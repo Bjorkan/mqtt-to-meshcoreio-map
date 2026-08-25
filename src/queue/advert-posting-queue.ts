@@ -1,5 +1,5 @@
 import type { MeshcoreioPoster } from "../meshcoreio-poster/meshcoreio-poster.js";
-import { warnMapUpload } from "../map-log.js";
+import { formatMapUploadLogLine, warnMapUpload } from "../map-log.js";
 import {
   UPLOAD_PACE_DELAY_MS,
   delay,
@@ -78,7 +78,13 @@ export class AdvertPostingQueue {
     }
 
     this.draining = true;
-    void this.drain();
+    void this.drain().catch((error: unknown) => {
+      console.error(
+        formatMapUploadLogLine(
+          `Upload queue crashed: ${formatUploadFailureReason(error)}.`,
+        ),
+      );
+    });
   }
 
   private async drain(): Promise<void> {

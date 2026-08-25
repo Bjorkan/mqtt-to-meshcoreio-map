@@ -170,7 +170,7 @@ export function loadConfig(
       maxQueuedUploads: envIntInRange(
         env.MESHCOREIO_MAX_QUEUED_UPLOADS,
         25,
-        0,
+        1,
         10000,
       ),
       retriesAllowed: envIntInRange(env.MESHCOREIO_RETRIES_ALLOWED, 3, 0, 100),
@@ -223,6 +223,11 @@ export function startRuntime(
   if (staticSigningIdentity) {
     log(
       `Using MeshCore.io upload public key ${staticSigningIdentity.publicKey.toString("hex")} from MESHCOREIO_PRIVATE_KEY.`,
+    );
+  }
+  if (config.mapUploader.retriesAllowed === 0) {
+    warn(
+      "MESHCOREIO_RETRIES_ALLOWED is 0; every upload request will be dropped before posting.",
     );
   }
   const uploader =

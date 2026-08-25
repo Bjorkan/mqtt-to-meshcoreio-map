@@ -86,6 +86,14 @@ export class MeshcoreioPoster {
     this.fetchImpl = dependencies.fetch ?? fetch;
     const signingIdentity =
       dependencies.signingIdentity ?? createMapUploadSigningIdentity();
+    if (
+      signingIdentity.privateSeed.length !== 32 ||
+      signingIdentity.publicKey.length !== 32
+    ) {
+      throw new Error(
+        "The MeshCore.io signing identity must contain 32-byte privateSeed and publicKey buffers.",
+      );
+    }
     this.publicKey = Buffer.from(signingIdentity.publicKey);
     this.privateSeed = Buffer.from(signingIdentity.privateSeed);
     this.publicKeyHex = this.publicKey.toString("hex");
@@ -208,14 +216,7 @@ export class MeshcoreioPoster {
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      let responseText = "";
-      try {
-        responseText = await response.text();
-      } catch (error: unknown) {
-        if (controller.signal.aborted) {
-          throw error;
-        }
-      }
+      const responseText = await response.text();
       return { response, responseText };
     } finally {
       clearTimeout(timeout);

@@ -38,6 +38,7 @@ jobs:
   docker:
     name: Docker build
     runs-on: ubuntu-latest
+    needs: test
 
     steps:
       - name: Check out repository

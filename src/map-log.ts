@@ -165,16 +165,10 @@ export function formatMapUploadLogLine(
   );
 }
 
-function formatSourcePrefix(sourceName?: string): string {
-  return sourceName ? `[${sanitizeLogText(sourceName, 80)}] ` : "";
+export function logMapUpload(message: string): void {
+  console.log(formatMapUploadLogLine(message));
 }
 
-export function logMapUpload(message: string, sourceName?: string): void {
-  const prefixed = formatSourcePrefix(sourceName) + message;
-  console.log(formatMapUploadLogLine(prefixed));
-}
-
-export function warnMapUpload(message: string, sourceName?: string): void {
-  const prefixed = formatSourcePrefix(sourceName) + message;
-  console.warn(formatMapUploadLogLine(prefixed));
+export function warnMapUpload(message: string): void {
+  console.warn(formatMapUploadLogLine(message));
 }
