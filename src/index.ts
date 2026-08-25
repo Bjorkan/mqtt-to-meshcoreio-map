@@ -284,9 +284,7 @@ export function startRuntime(
 
     client.on("message", (topic, payload) => {
       ready
-        .then(() =>
-          uploader.handleMqttMessage(topic, Buffer.from(payload)),
-        )
+        .then(() => uploader.handleMqttMessage(topic, Buffer.from(payload)))
         .catch((error: Error) => {
           warn(
             `[${sourceName}] Map upload handling failed for ${topic}: ${error.message}`,

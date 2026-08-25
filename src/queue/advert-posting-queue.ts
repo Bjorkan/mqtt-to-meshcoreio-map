@@ -95,7 +95,9 @@ export class AdvertPostingQueue {
           try {
             await this.uploadDelay(UPLOAD_PACE_DELAY_MS);
           } catch (delayError: unknown) {
-            warnMapUpload(`Upload delay failed: ${formatUploadFailureReason(delayError)}.`);
+            warnMapUpload(
+              `Upload delay failed: ${formatUploadFailureReason(delayError)}.`,
+            );
           }
         }
       }

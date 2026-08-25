@@ -39,10 +39,7 @@ export class MeshcoreMapUploader {
     this.reader.handleMqttMessage(topic, payload);
   }
 
-  processMqttMessage(
-    topic: string,
-    payload: Buffer,
-  ): Promise<void> {
+  processMqttMessage(topic: string, payload: Buffer): Promise<void> {
     return this.reader.processMqttMessage(topic, payload);
   }
 }

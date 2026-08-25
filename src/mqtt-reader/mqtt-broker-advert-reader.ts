@@ -46,10 +46,7 @@ export class MqttBrokerAdvertReader {
     });
   }
 
-  async processMqttMessage(
-    topic: string,
-    payload: Buffer,
-  ): Promise<void> {
+  async processMqttMessage(topic: string, payload: Buffer): Promise<void> {
     await this.ready;
 
     if (!this.config.enabled) {
