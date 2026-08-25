@@ -86,7 +86,7 @@ SOURCE_2_NAME=Secondary Broker
 SOURCE_2_MQTT_URL=mqtt://broker2.example:1883
 ```
 
-`SOURCE_N_RECONNECT_PERIOD_MS`, `SOURCE_N_CONNECT_TIMEOUT_MS`, and `SOURCE_N_REJECT_UNAUTHORIZED` override the global defaults per source. See `.env.example` for the full list.
+Sources must be numbered starting at `SOURCE_1` without gaps. `SOURCE_N_RECONNECT_PERIOD_MS`, `SOURCE_N_CONNECT_TIMEOUT_MS`, and `SOURCE_N_REJECT_UNAUTHORIZED` override the global defaults per source. See `.env.example` for the full list.
 
 `SOURCE_MQTT_URL` is passed to MQTT.js and can use standard MQTT URL schemes:
 

@@ -1,4 +1,6 @@
 import mqtt, { type IClientOptions, type MqttClient } from "mqtt";
+import { pathToFileURL } from "node:url";
+import path from "node:path";
 import {
   formatMapUploadLogLine,
   MeshcoreMapUploader,
@@ -42,7 +44,7 @@ function envInt(value: string | undefined, fallback: number): number {
   }
 
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  return Number.isInteger(parsed) ? parsed : fallback;
 }
 
 function envIntInRange(
@@ -325,7 +327,10 @@ export function startRuntime(
   };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
   try {
     const config = loadConfig();
     const runtime = startRuntime(config);

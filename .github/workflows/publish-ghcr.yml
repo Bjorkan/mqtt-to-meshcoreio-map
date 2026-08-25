@@ -108,6 +108,8 @@ jobs:
           tags: |
             type=raw,value=edge,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'release' }}
           labels: |
             org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}
           annotations: |
