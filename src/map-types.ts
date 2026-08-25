@@ -69,8 +69,6 @@ export interface MqttSourceConfig {
 
 export interface AdvertLogContext {
   advertLabel: string;
-  observerLabel: string;
-  sourceName?: string;
 }
 
 export interface MapUploadWorkRequest {

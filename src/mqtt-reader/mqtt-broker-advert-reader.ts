@@ -2,28 +2,20 @@ import { randomUUID } from "node:crypto";
 import { Advert, BufferUtils, Packet } from "@liamcottle/meshcore.js";
 import type { AdvertPostingQueue } from "../queue/advert-posting-queue.js";
 import {
-  DROP_LOG_SUPPRESS_MS,
   OBSERVER_TTL_MS,
   SEEN_ADVERT_TTL_SECONDS,
   UPLOADABLE_ADVERT_TYPES,
   buildPacketCandidate,
   buildUploadParams,
   formatAdvertLabel,
-  formatObserverLabel,
-  formatSeconds,
   getTopicType,
-  hasCompleteParams,
   hasValidParams,
   parseJsonPayload,
   parseRadioParams,
   readObserverId,
   readString,
 } from "../map-utils.js";
-import {
-  formatMapUploadLogLine,
-  logMapUpload,
-  warnMapUpload,
-} from "../map-log.js";
+import { formatMapUploadLogLine } from "../map-log.js";
 import type {
   AdvertLogContext,
   MapUploaderConfig,
@@ -38,7 +30,6 @@ export class MqttBrokerAdvertReader {
   private readonly observers = new Map<string, ObserverState>();
   private readonly seenAdverts = new Map<string, number>();
   private readonly recentValidAdverts = new Map<string, number>();
-  private readonly recentDropLogs = new Map<string, number>();
   readonly ready: Promise<void>;
 
   constructor(
@@ -52,7 +43,7 @@ export class MqttBrokerAdvertReader {
 
   handleMqttMessage(topic: string, payload: Buffer, sourceName?: string): void {
     this.processMqttMessage(topic, payload, sourceName).catch((err: Error) => {
-      console.error(formatMapUploadLogLine("Failed:"), err.message);
+      console.error(formatMapUploadLogLine(`Failed: ${err.message}`));
     });
   }
 
@@ -71,7 +62,7 @@ export class MqttBrokerAdvertReader {
 
     const type = getTopicType(topic);
     if (type === "status") {
-      await this.rememberStatus(topic, payload, sourceName);
+      await this.rememberStatus(topic, payload);
       return;
     }
 
@@ -84,7 +75,7 @@ export class MqttBrokerAdvertReader {
       return;
     }
 
-    await this.processPacket(candidate, sourceName);
+    await this.processPacket(candidate);
   }
 
   rememberSuccessfulAdvert(pubKey: string, timestamp: number): void {
@@ -94,14 +85,9 @@ export class MqttBrokerAdvertReader {
     }
   }
 
-  private async rememberStatus(
-    topic: string,
-    payload: Buffer,
-    sourceName?: string,
-  ): Promise<void> {
+  private async rememberStatus(topic: string, payload: Buffer): Promise<void> {
     const parsed = parseJsonPayload(payload);
     if (typeof parsed !== "object" || parsed === null) {
-      warnMapUpload(`Status on ${topic} is not JSON. Dropping.`, sourceName);
       return;
     }
 
@@ -109,26 +95,11 @@ export class MqttBrokerAdvertReader {
 
     const originId = readObserverId(data, topic);
     if (!originId) {
-      warnMapUpload(
-        "Status is missing a valid observer ID; cannot store radio data.",
-        sourceName,
-      );
       return;
     }
 
     const parsedParams = parseRadioParams(data);
-    const parsedComplete = hasCompleteParams(parsedParams);
-    const parsedValid = hasValidParams(parsedParams);
-
-    if (parsedComplete && !parsedValid) {
-      warnMapUpload(
-        `Invalid complete radio parameters for ${readString(data.origin) ?? originId}. Keeping the latest valid observer status.`,
-        sourceName,
-      );
-      return;
-    }
-
-    if (!parsedValid) {
+    if (!hasValidParams(parsedParams)) {
       return;
     }
 
@@ -142,10 +113,10 @@ export class MqttBrokerAdvertReader {
     this.observers.set(originId, state);
   }
 
-  private async processPacket(
-    candidate: { rawPacket: Buffer; observerId?: string },
-    sourceName?: string,
-  ): Promise<void> {
+  private async processPacket(candidate: {
+    rawPacket: Buffer;
+    observerId?: string;
+  }): Promise<void> {
     let packet: Packet;
     try {
       packet = Packet.fromBytes(candidate.rawPacket);
@@ -161,10 +132,6 @@ export class MqttBrokerAdvertReader {
     try {
       advert = Advert.fromBytes(packet.payload);
     } catch {
-      warnMapUpload(
-        "ADVERT payload could not be parsed. Dropping.",
-        sourceName,
-      );
       return;
     }
 
@@ -174,57 +141,29 @@ export class MqttBrokerAdvertReader {
     const observer = candidate.observerId
       ? this.observers.get(candidate.observerId)
       : undefined;
-    const logContext: AdvertLogContext = {
-      advertLabel: formatAdvertLabel(nodeName, pubKey),
-      observerLabel: formatObserverLabel(observer, candidate.observerId),
-      sourceName,
-    };
 
     const advertKey = this.makeAdvertKey(pubKey, advert.timestamp);
     const requestId = randomUUID();
 
     if (!UPLOADABLE_ADVERT_TYPES.has(advertType)) {
-      this.logAdvertDrop(
-        `type:${advertKey}:${advertType}`,
-        `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} has type ${advertType}. Dropping.`,
-        "log",
-        sourceName,
-      );
       return;
     }
 
     if (!(await advert.isVerified())) {
-      this.logAdvertDrop(
-        `signature:${advertKey}`,
-        `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} failed signature verification. Dropping.`,
-        "warn",
-        sourceName,
-      );
       return;
     }
 
     const params = buildUploadParams(observer?.params ?? {});
     if (!hasValidParams(params)) {
-      this.logAdvertDrop(
-        `params:${advertKey}`,
-        `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is missing valid observer radio parameters. Dropping.`,
-        "warn",
-        sourceName,
-      );
       return;
     }
 
     const previousTimestamp = this.seenAdverts.get(pubKey);
-    if (previousTimestamp !== undefined) {
-      if (previousTimestamp >= advert.timestamp) {
-        this.logAdvertDrop(
-          `replay:${advertKey}:${previousTimestamp}`,
-          `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} was already heard at timestamp ${previousTimestamp}. Dropping.`,
-          "log",
-          sourceName,
-        );
-        return;
-      }
+    if (
+      previousTimestamp !== undefined &&
+      previousTimestamp >= advert.timestamp
+    ) {
+      return;
     }
 
     const previousValidAdvertAt = this.recentValidAdverts.get(pubKey);
@@ -232,28 +171,15 @@ export class MqttBrokerAdvertReader {
       previousValidAdvertAt !== undefined &&
       this.now() - previousValidAdvertAt < VALID_ADVERT_COOLDOWN_MS
     ) {
-      this.logAdvertDrop(
-        `cooldown:${pubKey}`,
-        `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is on internal ${formatSeconds(VALID_ADVERT_COOLDOWN_MS / 1000)} cooldown after the first valid advert. Dropping.`,
-        "log",
-        sourceName,
-      );
       return;
     }
 
-    if (previousTimestamp !== undefined) {
-      if (
-        advert.timestamp <
+    if (
+      previousTimestamp !== undefined &&
+      advert.timestamp <
         previousTimestamp + this.config.minReuploadIntervalSeconds
-      ) {
-        this.logAdvertDrop(
-          `reupload:${advertKey}:${previousTimestamp}`,
-          `Advert for ${logContext.advertLabel} received by ${logContext.observerLabel} is ${formatSeconds(advert.timestamp - previousTimestamp)} newer than the last upload; minimum reupload interval is ${formatSeconds(this.config.minReuploadIntervalSeconds)}. Dropping.`,
-          "log",
-          sourceName,
-        );
-        return;
-      }
+    ) {
+      return;
     }
 
     this.recentValidAdverts.set(pubKey, this.now());
@@ -269,35 +195,14 @@ export class MqttBrokerAdvertReader {
       observerId: candidate.observerId,
       observerName: observer?.origin,
       radioParams: params,
-      logContext,
+      logContext: {
+        advertLabel: formatAdvertLabel(nodeName, pubKey),
+      },
     });
   }
 
   private makeAdvertKey(pubKey: string, timestamp: number): string {
     return `${pubKey}:${timestamp}`;
-  }
-
-  private logAdvertDrop(
-    dropKey: string,
-    message: string,
-    level: "log" | "warn" = "log",
-    sourceName?: string,
-  ): void {
-    const now = this.now();
-    const lastLoggedAt = this.recentDropLogs.get(dropKey);
-    if (
-      lastLoggedAt !== undefined &&
-      now - lastLoggedAt < DROP_LOG_SUPPRESS_MS
-    ) {
-      return;
-    }
-
-    this.recentDropLogs.set(dropKey, now);
-    if (level === "warn") {
-      warnMapUpload(message, sourceName);
-    } else {
-      logMapUpload(message, sourceName);
-    }
   }
 
   private async cleanupState(): Promise<void> {
@@ -321,13 +226,6 @@ export class MqttBrokerAdvertReader {
     for (const [pubKey, heardAt] of this.recentValidAdverts) {
       if (heardAt < oldestValidAdvert) {
         this.recentValidAdverts.delete(pubKey);
-      }
-    }
-
-    const oldestDropLog = now - DROP_LOG_SUPPRESS_MS;
-    for (const [dropKey, loggedAt] of this.recentDropLogs) {
-      if (loggedAt < oldestDropLog) {
-        this.recentDropLogs.delete(dropKey);
       }
     }
   }

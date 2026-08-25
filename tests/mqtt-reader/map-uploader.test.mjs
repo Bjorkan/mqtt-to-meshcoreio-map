@@ -53,7 +53,7 @@ test('uploads verified packets.raw adverts with firmware radio parameters', asyn
   assert.deepEqual(data.links, [`meshcore://${hex(packet)}`]);
 });
 
-test('drops duplicate adverts already queued or in flight on internal cooldown', async () => {
+test('does not upload or log a duplicate advert while the first copy is in flight', async () => {
   let releaseFetch;
   const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
     fetch: async () => {
@@ -82,8 +82,7 @@ test('drops duplicate adverts already queued or in flight on internal cooldown',
   releaseFetch();
   await first;
 
-  assert.equal(logs.length, 1);
-  assert.match(logs[0], /is on internal 3600s cooldown after the first valid advert\. Dropping\./);
+  assert.deepEqual(logs, []);
 });
 
 test('does not log successful observer status updates as map uploads', async () => {
@@ -501,12 +500,8 @@ test('dry-run processes five adverts end to end without posting invalid or valid
   });
 
   assert.equal(requests.length, 0);
-  assert.equal(logs.filter((line) => /registered to posting queue/.test(line)).length, 2);
-  assert.equal(logs.filter((line) => /Dry run enabled; would send advert/.test(line)).length, 2);
-  assert.equal(logs.filter((line) => /Dropping\./.test(line)).length, 3);
-  assert.match(logs.join('\n'), /SE-STO-BAD-CHAT .* has type CHAT\. Dropping\./);
-  assert.match(logs.join('\n'), /SE-STO-BAD-NONE .* has type NONE\. Dropping\./);
-  assert.match(logs.join('\n'), /SE-STO-BAD-SIG .* failed signature verification\. Dropping\./);
+  assert.equal(logs.filter((line) => /Dry run: would send advert/.test(line)).length, 2);
+  assert.equal(logs.filter((line) => /Dropping\./.test(line)).length, 0);
 });
 
 test('skips adverts until observer radio parameters are complete', async () => {
@@ -522,26 +517,14 @@ test('skips adverts until observer radio parameters are complete', async () => {
   });
 
   assert.equal(requests.length, 0);
-  assert.match(
-    logs.at(-1),
-    /Advert for SE-STO-TEST \([0-9a-f]{6}\) received by a1a1a1 is missing valid observer radio parameters\. Dropping\./
-  );
+  assert.deepEqual(logs, []);
 });
 
-test('skips chat, none, and invalid-signature adverts', async () => {
-  for (const [packet, expected] of [
-    [
-      makeAdvertPacket({ type: advertTypes.chat }),
-      /Advert for SE-STO-TEST \([0-9a-f]{6}\) received by SE-STO-OBSERVER has type CHAT\. Dropping\./,
-    ],
-    [
-      makeAdvertPacket({ type: advertTypes.none }),
-      /Advert for SE-STO-TEST \([0-9a-f]{6}\) received by SE-STO-OBSERVER has type NONE\. Dropping\./,
-    ],
-    [
-      makeAdvertPacket({ tamperSignature: true }),
-      /Advert for SE-STO-TEST \([0-9a-f]{6}\) received by SE-STO-OBSERVER failed signature verification\. Dropping\./,
-    ],
+test('skips chat, none, and invalid-signature adverts silently', async () => {
+  for (const packet of [
+    makeAdvertPacket({ type: advertTypes.chat }),
+    makeAdvertPacket({ type: advertTypes.none }),
+    makeAdvertPacket({ tamperSignature: true }),
   ]) {
     const { fetch, requests } = makeFetch();
     const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({ fetch }));
@@ -555,7 +538,7 @@ test('skips chat, none, and invalid-signature adverts', async () => {
     });
 
     assert.equal(requests.length, 0);
-    assert.match(logs.at(-1), expected);
+    assert.deepEqual(logs, []);
   }
 });
 
@@ -592,14 +575,14 @@ test('applies replay, reupload interval, and queued upload retry', async () => {
     await uploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(first) })));
   });
   assert.equal(requests.length, 1);
-  assert.match(logs.at(-1), /was already heard at timestamp 1800000000\. Dropping\./);
+  assert.deepEqual(logs, []);
 
   const tooSoon = makeAdvertPacket({ timestamp: 1_800_000_100 });
   logs = await captureConsoleOutput(async () => {
     await uploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(tooSoon) })));
   });
   assert.equal(requests.length, 1);
-  assert.match(logs.at(-1), /is on internal 3600s cooldown after the first valid advert\. Dropping\./);
+  assert.deepEqual(logs, []);
 
   now += 60 * 60 * 1000;
   const later = makeAdvertPacket({ timestamp: 1_800_003_700 });
@@ -625,8 +608,8 @@ test('applies replay, reupload interval, and queued upload retry', async () => {
     await retryUploader.processMqttMessage('meshcore/STO/observer-key/raw', Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(retryPacket) })));
   });
   assert.equal(retryRequests.length, 2);
-  assert.match(logs.join('\n'), /Upload failed for SE-STO-TEST \([0-9a-f]{6}\): meshcore\.io responded 500: nope\. Going to the back of the queue, 2 retries allowed\./);
-  assert.match(logs.at(-1), /Meshcore\.io accepted advert for SE-STO-TEST \([0-9a-f]{6}\): {"ok":true}/);
+  assert.equal(logs.filter((line) => /Upload failed/.test(line)).length, 0);
+  assert.match(logs.at(-1), /Advert SE-STO-TEST \([0-9a-f]{6}\) sent to meshcore\.io: no parseable response – \{"ok":true\}/);
 });
 
 test('holds a valid advert on in-memory cooldown for one hour across observers', async () => {
@@ -657,7 +640,7 @@ test('holds a valid advert on in-memory cooldown for one hour across observers',
   });
 
   assert.equal(requests.length, 1);
-  assert.match(logs.at(-1), /is on internal 3600s cooldown after the first valid advert\. Dropping\./);
+  assert.deepEqual(logs, []);
 
   now += 60 * 60 * 1000;
   await uploader.processMqttMessage(
@@ -668,46 +651,45 @@ test('holds a valid advert on in-memory cooldown for one hour across observers',
   assert.equal(requests.length, 2);
 });
 
-test('suppresses repeated drop logs for the same advert and reason', async () => {
-  const { fetch, requests } = makeFetch();
-  let now = 10_000;
+test('logs one outcome line when several observers hear the same advert', async () => {
+  const { fetch, requests } = makeFetch({ text: '{"code":"NODES_INSERTED"}' });
   const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
     fetch,
-    now: () => now,
+    now: () => 10_000,
   }));
-  await rememberDefaultStatus(uploader);
+  const secondObserverId = 'b2'.repeat(32);
+  const thirdObserverId = 'c3'.repeat(32);
 
-  const packet = makeAdvertPacket({ timestamp: 1_800_400_000 });
+  await rememberDefaultStatus(uploader);
   await uploader.processMqttMessage(
-    `meshcore/STO/${OBSERVER_ID}/raw`,
-    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(packet) }))
+    `meshcore/STO/${secondObserverId}/status`,
+    statusPayload({ origin: 'SE-STO-OBSERVER-2', origin_id: secondObserverId })
+  );
+  await uploader.processMqttMessage(
+    `meshcore/STO/${thirdObserverId}/status`,
+    statusPayload({ origin: 'SE-STO-OBSERVER-3', origin_id: thirdObserverId })
   );
 
-  let logs = await captureConsoleOutput(async () => {
+  const packet = makeAdvertPacket({ timestamp: 1_800_400_000 });
+  const logs = await captureConsoleOutput(async () => {
     await uploader.processMqttMessage(
       `meshcore/STO/${OBSERVER_ID}/raw`,
       Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(packet) }))
     );
     await uploader.processMqttMessage(
-      `meshcore/STO/${OBSERVER_ID}/packets`,
-      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, raw: hex(packet) }))
+      `meshcore/STO/${secondObserverId}/packets`,
+      Buffer.from(JSON.stringify({ origin_id: secondObserverId, raw: hex(packet) }))
+    );
+    await uploader.processMqttMessage(
+      `meshcore/STO/${thirdObserverId}/raw`,
+      Buffer.from(JSON.stringify({ origin_id: thirdObserverId, data: hex(packet) }))
     );
   });
 
   assert.equal(requests.length, 1);
-  assert.equal(logs.length, 1);
-  assert.match(logs[0], /was already heard at timestamp 1800400000\. Dropping\./);
-
-  now += 60_001;
-  logs = await captureConsoleOutput(async () => {
-    await uploader.processMqttMessage(
-      `meshcore/STO/${OBSERVER_ID}/raw`,
-      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(packet) }))
-    );
-  });
-
-  assert.equal(logs.length, 1);
-  assert.match(logs[0], /was already heard at timestamp 1800400000\. Dropping\./);
+  const outcomeLines = logs.filter((line) => /sent to meshcore\.io/.test(line));
+  assert.equal(outcomeLines.length, 1);
+  assert.match(outcomeLines[0], /sent to meshcore\.io: NODES_INSERTED/);
 });
 
 test('skips oversized packet hex before parsing', async () => {

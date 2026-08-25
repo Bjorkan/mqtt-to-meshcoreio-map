@@ -25,11 +25,11 @@ test('logs map API accepted and recently-updated responses for pushed adverts', 
   for (const [text, expected] of [
     [
       '{"message":"Node(s) inserted/updated successfully","code":"NODES_INSERTED"}',
-      /Meshcore\.io accepted advert for SE-STO-TEST \([0-9a-f]{6}\)\./,
+      /Advert SE-STO-TEST \([0-9a-f]{6}\) sent to meshcore\.io: NODES_INSERTED/,
     ],
     [
       '{"error":"Advert recently processed, ignoring","code":"ERR_ADVERT_DUPLICATE"}',
-      /Meshcore\.io accepted advert for SE-STO-TEST \([0-9a-f]{6}\) but dropped it because it was updated recently\./,
+      /Advert SE-STO-TEST \([0-9a-f]{6}\) sent to meshcore\.io: ERR_ADVERT_DUPLICATE – node was updated recently/,
     ],
   ]) {
     const { fetch } = makeFetch({ text });
@@ -72,7 +72,7 @@ test('does not retry terminal map API responses', async () => {
   assert.equal(requests.length, 1);
   assert.match(
     logs.at(-1),
-    /Meshcore\.io accepted advert for SE-STO-TEST \([0-9a-f]{6}\) but dropped it because it was updated recently\./
+    /Advert SE-STO-TEST \([0-9a-f]{6}\) sent to meshcore\.io: ERR_ADVERT_DUPLICATE – node was updated recently/
   );
 });
 
@@ -129,7 +129,6 @@ test('posts JSON-serializable queue work requests without parsed Advert instance
     },
     logContext: {
       advertLabel: `SE-STO-TEST (${nodePublicKey.slice(0, 6)})`,
-      observerLabel: 'SE-STO-OBSERVER',
     },
   }));
 

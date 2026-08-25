@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { MeshcoreioPoster } from "../meshcoreio-poster/meshcoreio-poster.js";
-import { logMapUpload, warnMapUpload } from "../map-log.js";
+import { warnMapUpload } from "../map-log.js";
 import {
   UPLOAD_RETRY_DELAY_MS,
   delay,
@@ -10,6 +10,7 @@ import type { MapUploadWorkRequest, MapUploaderConfig } from "../map-types.js";
 
 interface UploadQueueJob extends MapUploadWorkRequest {
   resolve: () => void;
+  attempts: number;
 }
 
 export interface AdvertPostingQueueDependencies {
@@ -42,9 +43,6 @@ export class AdvertPostingQueue {
     const { advertKey, logContext, nodePublicKey } = input;
 
     if (input.retriesAllowed <= 0) {
-      warnMapUpload(
-        `No retries allowed for ${logContext.advertLabel}. Dropping queue request ${input.requestId}.`,
-      );
       return Promise.resolve();
     }
 
@@ -72,6 +70,7 @@ export class AdvertPostingQueue {
 
     const job: UploadQueueJob = {
       ...input,
+      attempts: 0,
       resolve: resolveJob,
     };
 
@@ -79,14 +78,8 @@ export class AdvertPostingQueue {
     this.nodeKeysInQueueOrFlight.add(nodePublicKey);
     if (this.activeUploads < this.config.maxConcurrentUploads) {
       this.startUploadJob(job);
-      logMapUpload(
-        `Advert from ${logContext.advertLabel} heard by ${logContext.observerLabel} registered to posting queue. Place in queue 0.`,
-      );
     } else {
       this.uploadQueue.push(job);
-      logMapUpload(
-        `Advert from ${logContext.advertLabel} heard by ${logContext.observerLabel} registered to posting queue. Place in queue ${this.uploadQueue.length}.`,
-      );
     }
 
     return done;
@@ -98,6 +91,7 @@ export class AdvertPostingQueue {
 
     void (async () => {
       try {
+        job.attempts += 1;
         const result = await poster.post(job);
         if (result.status === "handled") {
           this.onHandled(result.pubKey, result.timestamp);
@@ -105,12 +99,14 @@ export class AdvertPostingQueue {
         } else {
           this.retryOrDropUploadJob(job, result.error);
         }
+      } catch (error: unknown) {
+        this.retryOrDropUploadJob(job, error);
       } finally {
         try {
           await this.workerDelay(UPLOAD_RETRY_DELAY_MS);
         } catch (delayError: unknown) {
           warnMapUpload(
-            `Upload worker delay failed: ${formatUploadFailureReason(delayError)}.`,
+            `Upload delay failed: ${formatUploadFailureReason(delayError)}.`,
           );
         }
         this.activeUploads -= 1;
@@ -126,16 +122,13 @@ export class AdvertPostingQueue {
       retriesAllowed: job.retriesAllowed - 1,
     };
 
-    warnMapUpload(
-      `Upload failed for ${job.logContext.advertLabel}: ${reason}. Going to the back of the queue, ${retryJob.retriesAllowed} retries allowed.`,
-    );
-    this.requeueUploadJob(retryJob);
+    this.requeueUploadJob(retryJob, reason);
   }
 
-  private requeueUploadJob(job: UploadQueueJob): void {
+  private requeueUploadJob(job: UploadQueueJob, failureReason: string): void {
     if (job.retriesAllowed <= 0) {
       warnMapUpload(
-        `No retries allowed for ${job.logContext.advertLabel}. Dropping queue request ${job.requestId}.`,
+        `Advert ${job.logContext.advertLabel} dropped after ${job.attempts} attempt${job.attempts === 1 ? "" : "s"}: ${failureReason}.`,
       );
       this.finishUploadJob(job);
       return;

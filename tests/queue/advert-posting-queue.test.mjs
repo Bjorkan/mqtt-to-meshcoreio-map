@@ -19,7 +19,7 @@ import {
   signedRequestData,
 } from '../mqtt-reader/helpers.mjs';
 
-test('logs aborted uploads with remaining retries', async () => {
+test('stays silent about a failed attempt that succeeds on retry', async () => {
   const requests = [];
   let attempt = 0;
   const uploader = new MeshcoreMapUploader(makeConfig(), {
@@ -44,10 +44,8 @@ test('logs aborted uploads with remaining retries', async () => {
   });
 
   assert.equal(requests.length, 2);
-  assert.match(
-    logs.join('\n'),
-    /Upload failed for SE-STO-TEST \([0-9a-f]{6}\): operation aborted\. Going to the back of the queue, 2 retries allowed\./
-  );
+  assert.deepEqual(logs.filter((line) => /Upload failed|Going to the back/.test(line)), []);
+  assert.match(logs.at(-1), /sent to meshcore\.io/);
 });
 
 test('limits concurrent map uploads and queues the rest', async () => {
@@ -269,13 +267,14 @@ test('drops uploads after three failed tries', async () => {
   });
 
   assert.equal(failing.requests.length, 3);
-  assert.match(logs.join('\n'), /Going to the back of the queue, 2 retries allowed\./);
-  assert.match(logs.join('\n'), /Going to the back of the queue, 1 retries allowed\./);
-  assert.match(logs.join('\n'), /Going to the back of the queue, 0 retries allowed\./);
-  assert.match(logs.at(-1), /No retries allowed for SE-STO-TEST \([0-9a-f]{6}\)\. Dropping queue request [0-9a-f-]+\./);
+  assert.equal(logs.filter((line) => /Upload failed|Going to the back/.test(line)).length, 0);
+  assert.match(
+    logs.at(-1),
+    /Advert SE-STO-TEST \([0-9a-f]{6}\) dropped after 3 attempts: meshcore\.io responded 503: down\./
+  );
 });
 
-test('queue drops incoming work requests with no retries allowed', async () => {
+test('queue drops incoming work requests with no retries allowed silently', async () => {
   const queue = new AdvertPostingQueue(
     makeConfig(),
     { post: async () => ({ status: 'handled', pubKey: ADVERT_SEED.toString('hex'), timestamp: 1 }) },
@@ -303,13 +302,9 @@ test('queue drops incoming work requests with no retries allowed', async () => {
       },
       logContext: {
         advertLabel: 'SE-STO-TEST (a09aa5)',
-        observerLabel: 'SE-STO-OBSERVER',
       },
     });
   });
 
-  assert.match(
-    logs.at(-1),
-    /No retries allowed for SE-STO-TEST \(a09aa5\)\. Dropping queue request f8d0f0fb-783c-4a2e-b0c4-22a86b22b43b\./
-  );
+  assert.deepEqual(logs, []);
 });

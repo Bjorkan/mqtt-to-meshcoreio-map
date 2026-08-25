@@ -1,11 +1,10 @@
 import type {
   AdvertLogContext,
   MapApiResponseBody,
-  ObserverState,
   PacketCandidate,
   RadioParams,
 } from "./map-types.js";
-import { sanitizeLogText, trimLogBody, warnMapUpload } from "./map-log.js";
+import { sanitizeLogText, trimLogBody } from "./map-log.js";
 
 const HEX_RE = /^[0-9a-f]+$/i;
 const PUBLIC_KEY_HEX_RE = /^[0-9a-f]{64}$/i;
@@ -16,7 +15,6 @@ const MAX_PACKET_HEX_CHARS = 1024;
 export const UPLOADABLE_ADVERT_TYPES = new Set(["REPEATER", "ROOM", "SENSOR"]);
 export const OBSERVER_TTL_MS = 24 * 60 * 60 * 1000;
 export const SEEN_ADVERT_TTL_SECONDS = 72 * 60 * 60;
-export const DROP_LOG_SUPPRESS_MS = 60 * 1000;
 export const UPLOAD_RETRY_DELAY_MS = 5 * 1000;
 
 function normalizeHex(value: string): string {
@@ -58,7 +56,7 @@ function parseRadioString(radio: string | undefined): RadioParams {
   }
 
   const commaSeparated = radio.match(
-    /^\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*$/
+    /^\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*$/,
   );
   if (commaSeparated) {
     return {
@@ -114,15 +112,24 @@ export function buildUploadParams(params: RadioParams): RadioParams {
 }
 
 export function parseRadioParams(data: Record<string, unknown>): RadioParams {
-  const directParams = typeof data.params === "object" && data.params !== null
-    ? data.params as Record<string, unknown>
-    : data;
+  const directParams =
+    typeof data.params === "object" && data.params !== null
+      ? (data.params as Record<string, unknown>)
+      : data;
 
   const radioFromFields: RadioParams = {
-    freq: toNumber(directParams.freq ?? directParams.frequency ?? directParams.radioFreq),
-    cr: toNumber(directParams.cr ?? directParams.codingRate ?? directParams.radioCr),
-    sf: toNumber(directParams.sf ?? directParams.spreadingFactor ?? directParams.radioSf),
-    bw: toNumber(directParams.bw ?? directParams.bandwidth ?? directParams.radioBw),
+    freq: toNumber(
+      directParams.freq ?? directParams.frequency ?? directParams.radioFreq,
+    ),
+    cr: toNumber(
+      directParams.cr ?? directParams.codingRate ?? directParams.radioCr,
+    ),
+    sf: toNumber(
+      directParams.sf ?? directParams.spreadingFactor ?? directParams.radioSf,
+    ),
+    bw: toNumber(
+      directParams.bw ?? directParams.bandwidth ?? directParams.radioBw,
+    ),
   };
 
   if (radioFromFields.freq !== undefined) {
@@ -136,7 +143,9 @@ export function parseRadioParams(data: Record<string, unknown>): RadioParams {
   return {
     ...parseRadioString(readString(data.radio)),
     ...Object.fromEntries(
-      Object.entries(radioFromFields).filter(([, value]) => value !== undefined)
+      Object.entries(radioFromFields).filter(
+        ([, value]) => value !== undefined,
+      ),
     ),
   };
 }
@@ -156,20 +165,22 @@ function findObserverIdInTopic(topic: string): string | undefined {
   return topic.split("/").find(isHexPublicKey);
 }
 
-export function readObserverId(data: Record<string, unknown>, topic: string): string | undefined {
+export function readObserverId(
+  data: Record<string, unknown>,
+  topic: string,
+): string | undefined {
   const originId = readString(data.origin_id);
-  if (originId) {
-    if (isHexPublicKey(originId)) {
-      return originId.toLowerCase();
-    }
-
-    warnMapUpload(`Ignoring invalid origin_id ${originId}`);
+  if (originId && isHexPublicKey(originId)) {
+    return originId.toLowerCase();
   }
 
   return findObserverIdInTopic(topic)?.toLowerCase();
 }
 
-function getPayloadHex(data: unknown, type: "raw" | "packets"): string | undefined {
+function getPayloadHex(
+  data: unknown,
+  type: "raw" | "packets",
+): string | undefined {
   if (typeof data === "string") {
     return normalizeHex(data);
   }
@@ -179,23 +190,25 @@ function getPayloadHex(data: unknown, type: "raw" | "packets"): string | undefin
   }
 
   const obj = data as Record<string, unknown>;
-  const value = type === "packets"
-    ? obj.raw ?? obj.packet ?? obj.payload ?? obj.data
-    : obj.data ?? obj.raw ?? obj.packet ?? obj.payload;
+  const value =
+    type === "packets"
+      ? (obj.raw ?? obj.packet ?? obj.payload ?? obj.data)
+      : (obj.data ?? obj.raw ?? obj.packet ?? obj.payload);
   return typeof value === "string" ? normalizeHex(value) : undefined;
 }
 
 function isLikelyHexPacket(hex: string | undefined): hex is string {
-  return Boolean(hex && hex.length >= 2 && hex.length % 2 === 0 && HEX_RE.test(hex));
+  return Boolean(
+    hex && hex.length >= 2 && hex.length % 2 === 0 && HEX_RE.test(hex),
+  );
 }
 
 export function buildPacketCandidate(
   topic: string,
   payload: Buffer,
-  type: "raw" | "packets"
+  type: "raw" | "packets",
 ): PacketCandidate | null {
   if (payload.length > MAX_MQTT_PAYLOAD_BYTES) {
-    warnMapUpload("MQTT message is unreasonably large. Dropping.");
     return null;
   }
 
@@ -206,16 +219,15 @@ export function buildPacketCandidate(
   }
 
   if (hex.length > MAX_PACKET_HEX_CHARS) {
-    warnMapUpload("Packet hex is unreasonably long. Dropping.");
     return null;
   }
 
-  const observerId = typeof parsed === "object" && parsed !== null
-    ? readObserverId(parsed as Record<string, unknown>, topic)
-    : findObserverIdInTopic(topic)?.toLowerCase();
+  const observerId =
+    typeof parsed === "object" && parsed !== null
+      ? readObserverId(parsed as Record<string, unknown>, topic)
+      : findObserverIdInTopic(topic)?.toLowerCase();
 
   if (!observerId) {
-    warnMapUpload("MQTT packet is missing a valid observer ID. Dropping.");
     return null;
   }
 
@@ -227,41 +239,50 @@ export function buildPacketCandidate(
 
 function buildParams(params: RadioParams): RadioParams {
   return Object.fromEntries(
-    Object.entries(params).filter(([, value]) => value !== undefined && Number.isFinite(value))
+    Object.entries(params).filter(
+      ([, value]) => value !== undefined && Number.isFinite(value),
+    ),
   ) as RadioParams;
 }
 
-export function hasCompleteParams(params: RadioParams): params is Required<RadioParams> {
+export function hasCompleteParams(
+  params: RadioParams,
+): params is Required<RadioParams> {
   return [params.freq, params.bw, params.sf, params.cr].every(
-    (value) => typeof value === "number" && Number.isFinite(value)
+    (value) => typeof value === "number" && Number.isFinite(value),
   );
 }
 
-export function hasValidParams(params: RadioParams): params is Required<RadioParams> {
-  return hasCompleteParams(params)
-    && params.freq >= 100
-    && params.freq <= 1000
-    && params.bw > 0
-    && params.bw <= 1000
-    && params.sf >= 5
-    && params.sf <= 12
-    && params.cr >= 4
-    && params.cr <= 8;
+export function hasValidParams(
+  params: RadioParams,
+): params is Required<RadioParams> {
+  return (
+    hasCompleteParams(params) &&
+    params.freq >= 100 &&
+    params.freq <= 1000 &&
+    params.bw > 0 &&
+    params.bw <= 1000 &&
+    params.sf >= 5 &&
+    params.sf <= 12 &&
+    params.cr >= 4 &&
+    params.cr <= 8
+  );
 }
 
 function shortPublicKey(publicKeyHex: string): string {
   return publicKeyHex.slice(0, 6);
 }
 
-export function formatAdvertLabel(nodeName: string, publicKeyHex: string): string {
+export function formatAdvertLabel(
+  nodeName: string,
+  publicKeyHex: string,
+): string {
   return `${sanitizeLogText(nodeName, 80)} (${shortPublicKey(publicKeyHex)})`;
 }
 
-export function formatObserverLabel(observer: ObserverState | undefined, observerId: string | undefined): string {
-  return observer?.origin ? sanitizeLogText(observer.origin, 80) : (observerId ? shortPublicKey(observerId) : "unknown observer");
-}
-
-export function parseMapApiResponse(text: string): MapApiResponseBody | undefined {
+export function parseMapApiResponse(
+  text: string,
+): MapApiResponseBody | undefined {
   if (!text.trim()) {
     return undefined;
   }
@@ -269,46 +290,61 @@ export function parseMapApiResponse(text: string): MapApiResponseBody | undefine
   try {
     const parsed = JSON.parse(text) as unknown;
     return typeof parsed === "object" && parsed !== null
-      ? parsed as MapApiResponseBody
+      ? (parsed as MapApiResponseBody)
       : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function formatMapApiSuccessLog(context: AdvertLogContext, response: MapApiResponseBody | undefined, rawText: string): string {
-  if (response?.code === "ERR_ADVERT_DUPLICATE") {
-    return `Meshcore.io accepted advert for ${context.advertLabel} but dropped it because it was updated recently.`;
-  }
+export function formatMapApiOutcomeLog(
+  context: AdvertLogContext,
+  response: MapApiResponseBody | undefined,
+  rawText: string,
+): string {
+  const label = context.advertLabel;
 
   if (response?.code === "NODES_INSERTED") {
-    return `Meshcore.io accepted advert for ${context.advertLabel}.`;
+    return `Advert ${label} sent to meshcore.io: NODES_INSERTED`;
+  }
+
+  if (response?.code === "ERR_ADVERT_DUPLICATE") {
+    return `Advert ${label} sent to meshcore.io: ERR_ADVERT_DUPLICATE – node was updated recently`;
   }
 
   if (response?.code === "ERR_COORDS_MISSING") {
-    return `Meshcore.io accepted advert for ${context.advertLabel} but dropped it because map coordinates are missing.`;
+    return `Advert ${label} sent to meshcore.io: ERR_COORDS_MISSING – map coordinates are missing`;
   }
 
-  const detail = response?.message ?? response?.error ?? rawText;
-  return `Meshcore.io accepted advert for ${context.advertLabel}${detail ? `: ${detail}` : "."}`;
+  const code =
+    typeof response?.code === "string" && response.code !== ""
+      ? response.code
+      : "no parseable response";
+  const detailCandidates = [response?.message, response?.error];
+  const detail =
+    detailCandidates.find(
+      (value) => typeof value === "string" && value !== "",
+    ) ?? (rawText.trim() !== "" ? trimLogBody(rawText) : undefined);
+  return `Advert ${label} sent to meshcore.io: ${code}${detail ? ` – ${detail}` : ""}`;
 }
 
-export function isTerminalMapApiResponse(response: MapApiResponseBody | undefined): boolean {
-  return typeof response?.code === "string"
-    && (
-      response.code === "NODES_INSERTED"
-      || response.code.startsWith("ERR_ADVERT_")
-      || response.code.startsWith("ERR_COORDS_")
-    );
-}
-
-export function formatSeconds(seconds: number): string {
-  return `${Math.max(0, Math.floor(seconds))}s`;
+export function isTerminalMapApiResponse(
+  response: MapApiResponseBody | undefined,
+): boolean {
+  return (
+    typeof response?.code === "string" &&
+    (response.code === "NODES_INSERTED" ||
+      response.code.startsWith("ERR_ADVERT_") ||
+      response.code.startsWith("ERR_COORDS_"))
+  );
 }
 
 export function formatUploadFailureReason(error: unknown): string {
   if (error instanceof Error) {
-    if (error.name === "AbortError" || /operation was aborted/i.test(error.message)) {
+    if (
+      error.name === "AbortError" ||
+      /operation was aborted/i.test(error.message)
+    ) {
       return "operation aborted";
     }
 
