@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { test } from "node:test";
+import { test } from "bun:test";
 
-import { loadConfig, redactUrlCredentials, startRuntime } from "../../dist/index.js";
+import { loadConfig, redactUrlCredentials, startRuntime } from "../../src/index.ts";
 import { ed25519 } from "@noble/curves/ed25519.js";
 
 class FakeMqttClient extends EventEmitter {

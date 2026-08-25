@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'bun:test';
 
 import {
   createMapUploadSigningIdentity,
   MeshcoreMapUploader,
-} from '../../dist/map-uploader.js';
+} from '../../src/map-uploader.ts';
 import {
   API_URL,
   FIFTH_ADVERT_SEED,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { test } from 'node:test';
+import { test } from 'bun:test';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
 import {
@@ -8,7 +8,7 @@ import {
   MeshcoreMapUploader,
   MeshcoreioPoster,
   parseStaticSigningIdentity,
-} from '../../dist/map-uploader.js';
+} from '../../src/map-uploader.ts';
 import {
   ADVERT_SEED,
   OBSERVER_ID,

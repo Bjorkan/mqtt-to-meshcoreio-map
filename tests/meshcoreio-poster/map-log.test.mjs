@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'bun:test';
 
 import {
   formatMapUploadLogLine,
   formatMapUploadLogPrefix,
-} from '../../dist/map-uploader.js';
+} from '../../src/map-uploader.ts';
 
 test('colorizes only map upload log prefix contents', () => {
   const originalNoColor = process.env.NO_COLOR;
