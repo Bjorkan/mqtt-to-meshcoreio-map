@@ -1,12 +1,14 @@
 import { AdvertPostingQueue } from "./queue/advert-posting-queue.js";
 import { MeshcoreioPoster } from "./meshcoreio-poster/meshcoreio-poster.js";
 import { MqttBrokerAdvertReader } from "./mqtt-reader/mqtt-broker-advert-reader.js";
-import type { MapUploaderConfig, MapUploaderDependencies } from "./map-types.js";
+import type {
+  MapUploaderConfig,
+  MapUploaderDependencies,
+} from "./map-types.js";
 
 export * from "./queue/advert-posting-queue.js";
 export * from "./map-log.js";
 export * from "./map-types.js";
-export * from "./persistence-store.js";
 export * from "./meshcoreio-poster/meshcoreio-poster.js";
 export * from "./mqtt-reader/mqtt-broker-advert-reader.js";
 
@@ -16,17 +18,18 @@ export class MeshcoreMapUploader {
 
   constructor(
     config: MapUploaderConfig,
-    dependencies: MapUploaderDependencies = {}
+    dependencies: MapUploaderDependencies = {},
   ) {
     const posters = Array.from(
       { length: config.maxConcurrentUploads },
-      () => new MeshcoreioPoster(config, dependencies)
+      () => new MeshcoreioPoster(config, dependencies),
     );
     const queue = new AdvertPostingQueue(
       config,
       posters,
-      (pubKey, timestamp) => this.reader.rememberSuccessfulAdvert(pubKey, timestamp),
-      dependencies
+      (pubKey, timestamp) =>
+        this.reader.rememberSuccessfulAdvert(pubKey, timestamp),
+      dependencies,
     );
 
     this.reader = new MqttBrokerAdvertReader(config, queue, dependencies);
@@ -40,7 +43,11 @@ export class MeshcoreMapUploader {
     this.reader.handleMqttMessage(topic, payload, sourceName);
   }
 
-  processMqttMessage(topic: string, payload: Buffer, sourceName?: string): Promise<void> {
+  processMqttMessage(
+    topic: string,
+    payload: Buffer,
+    sourceName?: string,
+  ): Promise<void> {
     return this.reader.processMqttMessage(topic, payload, sourceName);
   }
 }

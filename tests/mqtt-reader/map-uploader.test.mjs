@@ -1,15 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
   createMapUploadSigningIdentity,
   MeshcoreMapUploader,
-  TursoPersistenceStore,
 } from '../../dist/map-uploader.js';
-import { DashboardState } from '../../dist/dashboard/dashboard-state.js';
 import {
   API_URL,
   FIFTH_ADVERT_SEED,
@@ -100,24 +95,6 @@ test('does not log successful observer status updates as map uploads', async () 
   });
 
   assert.deepEqual(logs, []);
-});
-
-test('does not add routine status and empty packet messages to dashboard events', async () => {
-  const dashboardState = new DashboardState({
-    now: () => new Date('2026-06-19T10:00:00.000Z'),
-  });
-  const uploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
-    fetch: makeFetch().fetch,
-    dashboardState,
-  }));
-
-  await rememberDefaultStatus(uploader);
-  await uploader.processMqttMessage(
-    `meshcore/STO/${OBSERVER_ID}/packets`,
-    Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, type: 'PACKET' }))
-  );
-
-  assert.deepEqual(dashboardState.snapshot().logs, []);
 });
 
 test('uploads verified raw.data adverts with human readable radio parameters', async () => {
@@ -354,79 +331,6 @@ test('drops observer radio status after 24 hours without a new valid status', as
   );
 
   assert.equal(requests.length, 0);
-});
-
-test('loads persisted observer radio status from Turso after restart', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'mqtt-to-map-observers-'));
-  const dbPath = join(directory, 'mqtt-to-meshcoreio-map.turso');
-
-  try {
-    const firstStore = new TursoPersistenceStore(dbPath);
-    await firstStore.ready;
-    const firstUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
-      fetch: makeFetch().fetch,
-      observerStatusStore: firstStore,
-      now: () => 1_000_000,
-    }));
-    await rememberDefaultStatus(firstUploader);
-    await firstStore.close();
-
-    const { fetch, requests } = makeFetch();
-    const secondStore = new TursoPersistenceStore(dbPath);
-    await secondStore.ready;
-    const secondUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
-      fetch,
-      observerStatusStore: secondStore,
-      now: () => 1_000_000 + 30 * 60 * 1000,
-    }));
-
-    await secondUploader.processMqttMessage(
-      `meshcore/STO/${OBSERVER_ID}/raw`,
-      Buffer.from(JSON.stringify({ origin_id: OBSERVER_ID, data: hex(makeAdvertPacket({ timestamp: 1_800_070_000 })) }))
-    );
-
-    assert.equal(requests.length, 1);
-    assert.deepEqual(signedRequestData(requests).params, {
-      freq: 869.618,
-      bw: 62.5,
-      sf: 8,
-      cr: 8,
-    });
-    await secondStore.close();
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('removes persisted observer radio status older than 24 hours', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'mqtt-to-map-observers-'));
-  const dbPath = join(directory, 'mqtt-to-meshcoreio-map.turso');
-
-  try {
-    const firstStore = new TursoPersistenceStore(dbPath);
-    await firstStore.ready;
-    await firstStore.upsert({
-      origin: 'SE-STO-OBSERVER',
-      originId: OBSERVER_ID,
-      params: { freq: 869.618, bw: 62.5, sf: 8, cr: 8 },
-      updatedAt: 1_000_000,
-    });
-    await firstStore.close();
-
-    const secondStore = new TursoPersistenceStore(dbPath);
-    await secondStore.ready;
-    const secondUploader = new MeshcoreMapUploader(makeConfig(), makeUploaderDependencies({
-      fetch: makeFetch().fetch,
-      observerStatusStore: secondStore,
-      now: () => 1_000_000 + 24 * 60 * 60 * 1000 + 1,
-    }));
-    await secondUploader.ready;
-
-    assert.deepEqual(await secondStore.loadAll(), []);
-    await secondStore.close();
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
 });
 
 test('prefers packet raw over data and raw topic data over raw field', async () => {

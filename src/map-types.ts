@@ -1,6 +1,3 @@
-import type { DashboardState } from "./dashboard/dashboard-state.js";
-import type { ObserverStatusStore } from "./persistence-store.js";
-
 export interface MapUploaderConfig {
   enabled: boolean;
   apiUrl: string;
@@ -18,10 +15,8 @@ export interface MapUploadSigningIdentity {
 }
 
 export interface MapUploaderDependencies {
-  dashboardState?: DashboardState;
   fetch?: typeof fetch;
   now?: () => number;
-  observerStatusStore?: ObserverStatusStore;
   signingIdentity?: MapUploadSigningIdentity;
   workerDelay?: (ms: number) => Promise<void>;
 }
@@ -52,10 +47,7 @@ export interface SignedRequest {
 }
 
 export type MapApiResponseCode =
-  | "NODES_INSERTED"
-  | "ERR_ADVERT_DUPLICATE"
-  | "ERR_COORDS_MISSING"
-  | string;
+  "NODES_INSERTED" | "ERR_ADVERT_DUPLICATE" | "ERR_COORDS_MISSING" | string;
 
 export interface MapApiResponseBody {
   code?: MapApiResponseCode;
@@ -97,5 +89,10 @@ export interface MapUploadWorkRequest {
 }
 
 export type PosterResult =
-  | { status: "handled"; pubKey: string; timestamp: number; responseFromMeshcoreIO?: string }
+  | {
+      status: "handled";
+      pubKey: string;
+      timestamp: number;
+      responseFromMeshcoreIO?: string;
+    }
   | { status: "retry"; error: unknown };
