@@ -26,17 +26,19 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 24.16.0
-          cache: npm
+          bun-version: 1.4.0
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
 
       - name: Run tests
-        run: npm test
+        run: bun test
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
