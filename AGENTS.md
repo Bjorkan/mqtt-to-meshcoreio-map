@@ -11,11 +11,14 @@ Keep documentation, comments, tests, commit messages, and user-facing project te
 ## Useful Local Commands
 
 ```bash
-npm test
+bun run typecheck
+bun test
+bun run lint
+bun run format:check
 docker build -t mqtt-to-meshcoreio-map .
 ```
 
-Run both before publishing meaningful runtime changes.
+Run all of them before publishing meaningful runtime changes.
 
 ## Important References
 
@@ -33,6 +36,14 @@ Run both before publishing meaningful runtime changes.
 - `TECHNICAL.md` should hold under-the-hood details such as MQTT message contracts, MeshCore.io request format, signing behavior, and conversion flow.
 
 ## Runtime Notes
+
+- The service is fully in-memory: observer radio statuses, dedup caches, queue and retry state do not survive restarts. There is no database and no writable volume requirement.
+- There is no web dashboard; the service exposes no HTTP endpoints at all.
+- One MeshCore.io identity signs every upload. It is ephemeral per start unless `MESHCOREIO_PRIVATE_KEY` provides a fixed ed25519 seed (validated with a signature self-test at startup). Never log the private value; logging the derived public key is expected.
+- A single sequential upload queue drains itself one job at a time with a 5 second pacing delay between uploads. Do not reintroduce parallel posters or worker terminology.
+- The advert pipeline logs exactly one line per meshcore.io exchange (`sent to meshcore.io: <CODE>`), stays silent about drops and retries, and emits a single warning when a job exhausts its retries. Keep it that way.
+- The observer cache keeps only the latest valid radio status per observer and drops status older than 24 hours.
+- Upload queue capacity is bounded by `MESHCOREIO_MAX_QUEUED_UPLOADS`. Avoid changes that can create unbounded queues or HTTP uploads.
 
 ## Reviewer
 
