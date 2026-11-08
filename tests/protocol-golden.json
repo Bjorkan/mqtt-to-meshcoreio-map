@@ -1,0 +1,112 @@
+[
+  {
+    "name": "flood",
+    "hex": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b0195857eb99b2afe7cd0cc43d5340d2fec3d8a56a08774a30b022dc024b8e03625d0412d7391a0fc4370ee7f5fcc98b3fa74efa570e2e371d84c815ff72343078253452d53544f2d54455354",
+    "expected": {
+      "public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+      "timestamp": 1800000000,
+      "name": "SE-STO-TEST",
+      "kind": "REPEATER"
+    }
+  },
+  {
+    "name": "two-byte-path",
+    "hex": "1141aabba09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b0195857eb99b2afe7cd0cc43d5340d2fec3d8a56a08774a30b022dc024b8e03625d0412d7391a0fc4370ee7f5fcc98b3fa74efa570e2e371d84c815ff72343078253452d53544f2d54455354",
+    "expected": {
+      "public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+      "timestamp": 1800000000,
+      "name": "SE-STO-TEST",
+      "kind": "REPEATER"
+    }
+  },
+  {
+    "name": "direct",
+    "hex": "1200a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b0195857eb99b2afe7cd0cc43d5340d2fec3d8a56a08774a30b022dc024b8e03625d0412d7391a0fc4370ee7f5fcc98b3fa74efa570e2e371d84c815ff72343078253452d53544f2d54455354",
+    "expected": {
+      "public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+      "timestamp": 1800000000,
+      "name": "SE-STO-TEST",
+      "kind": "REPEATER"
+    }
+  },
+  {
+    "name": "transport-flood",
+    "hex": "100000000000a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b0195857eb99b2afe7cd0cc43d5340d2fec3d8a56a08774a30b022dc024b8e03625d0412d7391a0fc4370ee7f5fcc98b3fa74efa570e2e371d84c815ff72343078253452d53544f2d54455354",
+    "expected": {
+      "public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+      "timestamp": 1800000000,
+      "name": "SE-STO-TEST",
+      "kind": "REPEATER"
+    }
+  },
+  {
+    "name": "transport-direct",
+    "hex": "130000000000a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b0195857eb99b2afe7cd0cc43d5340d2fec3d8a56a08774a30b022dc024b8e03625d0412d7391a0fc4370ee7f5fcc98b3fa74efa570e2e371d84c815ff72343078253452d53544f2d54455354",
+    "expected": {
+      "public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+      "timestamp": 1800000000,
+      "name": "SE-STO-TEST",
+      "kind": "REPEATER"
+    }
+  },
+  {
+    "name": "room",
+    "hex": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b516d5811b55c25132bfdc48df48c21b41516960bb0f8f0ea32042cf15cad18c0340c16b31868b736f05dee31e6c6debc8f75a9980f9cd63c8723a48538aa27068353452d53544f2d54455354",
+    "expected": {
+      "public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+      "timestamp": 1800000000,
+      "name": "SE-STO-TEST",
+      "kind": "ROOM"
+    }
+  },
+  {
+    "name": "sensor",
+    "hex": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496ba2dad40f3009deb718017dd0979a7a02c0848432462515e78b6f40d87ac6dc4b9db270f7cbf6956d2bb05211d8263092f17835e8fa55e080a66ee56fad6ce5048453452d53544f2d54455354",
+    "expected": {
+      "public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+      "timestamp": 1800000000,
+      "name": "SE-STO-TEST",
+      "kind": "SENSOR"
+    }
+  },
+  {
+    "name": "unicode-name",
+    "hex": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b593c907fccbd616f49b9d2606434deff31eac478f772365a1de64e3e132ab3db1fd9b95c2359bc8f1e35e87e64c2e7b0622d7de2a220bd0c55214443f794920c824d616c6dc3b620f09f93a1",
+    "expected": {
+      "public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+      "timestamp": 1800000000,
+      "name": "Malmö 📡",
+      "kind": "REPEATER"
+    }
+  },
+  {
+    "name": "optional-metadata",
+    "hex": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496bb7f7fc4db2b4d6e28f110a54973bb2a83828e41001076adb0bcff37dcc23b9051ce91f469b5ca269fed151e81f27a73d3945d8fa77aa35d4d775b931b2f4b001f20000000000000000010203044d61702072656c6179",
+    "expected": {
+      "public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+      "timestamp": 1800000000,
+      "name": "Map relay",
+      "kind": "REPEATER"
+    }
+  },
+  {
+    "name": "chat",
+    "hex": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b5da371b6d01f9a015e65470298f94beb6c23ff2a1d5d33eb20a61761b0e8c7ea9ffe04f4a9907d18283571799f8985455778b6512a9ed25a91be45f0402f1a008153452d53544f2d54455354",
+    "expected": null
+  },
+  {
+    "name": "bad-signature",
+    "hex": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496bfe95857eb99b2afe7cd0cc43d5340d2fec3d8a56a08774a30b022dc024b8e03625d0412d7391a0fc4370ee7f5fcc98b3fa74efa570e2e371d84c815ff72343078253452d53544f2d54455354",
+    "expected": null
+  },
+  {
+    "name": "truncated",
+    "hex": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c9",
+    "expected": null
+  },
+  {
+    "name": "bad-header",
+    "hex": "0000a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b0195857eb99b2afe7cd0cc43d5340d2fec3d8a56a08774a30b022dc024b8e03625d0412d7391a0fc4370ee7f5fcc98b3fa74efa570e2e371d84c815ff72343078253452d53544f2d54455354",
+    "expected": null
+  }
+]

@@ -40,6 +40,11 @@ jobs:
           bun tests/config-golden.mjs
           git diff --exit-code -- tests/config-golden.json
 
+      - name: Verify MeshCore protocol fixtures are current
+        run: |
+          bun tests/protocol-golden.mjs
+          git diff --exit-code -- tests/protocol-golden.json
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
