@@ -32,7 +32,7 @@ Copy `.env.example` and provide at least:
 SOURCE_MQTT_URL=mqtt://your-broker:1883
 SOURCE_MQTT_USERNAME=
 SOURCE_MQTT_PASSWORD=
-TOPIC_FILTER=meshcore/#
+TOPIC_FILTER="meshcore/#"
 ```
 
 By default the service generates a fresh ephemeral MeshCore.io signing identity at every start and writes its public key to the logs. Set `MESHCOREIO_PRIVATE_KEY` to a 64-character hex ed25519 private seed to use a stable identity across restarts instead; invalid values abort startup. Private keys are kept in memory only and are never logged.
@@ -70,7 +70,7 @@ Edit `.env` and set the correct MQTT broker information:
 SOURCE_MQTT_URL=mqtt://your-broker:1883
 SOURCE_MQTT_USERNAME=
 SOURCE_MQTT_PASSWORD=
-TOPIC_FILTER=meshcore/#
+TOPIC_FILTER="meshcore/#"
 ```
 
 ### Multiple MQTT Sources
