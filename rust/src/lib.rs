@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub mod protocol;
+pub mod queue;
 pub mod reader;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

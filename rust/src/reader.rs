@@ -284,6 +284,12 @@ impl Reader {
         *seen = (*seen).max(timestamp);
     }
 
+    /// Start the cooldown only after the bounded queue accepts the job. A
+    /// full queue must not suppress a subsequent attempt to admit the advert.
+    pub fn admitted(&mut self, job: &Job, now: i64) {
+        self.recent.insert(job.node_key.clone(), now);
+    }
+
     pub fn receive(&mut self, topic: &str, payload: &[u8], now: i64) -> Option<Job> {
         self.observers
             .retain(|_, o| now - o.updated_at <= 86_400_000);
@@ -326,7 +332,6 @@ impl Reader {
         {
             return None;
         }
-        self.recent.insert(key.clone(), now);
         Some(Job {
             advert_key: format!("{key}:{timestamp}"),
             label: sanitized_label(&name, &key),
