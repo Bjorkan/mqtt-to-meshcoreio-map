@@ -4,13 +4,15 @@ use crate::uploader::Uploader;
 use crate::{Config, Source, log_color, time_zone};
 use rumqttc::mqttbytes::v4::SubscribeReasonCode;
 use rumqttc::{
-    AsyncClient, Event, MqttOptions, NetworkOptions, Packet, QoS, TlsConfiguration, Transport,
+    AsyncClient, ConnectionError, Event, MqttOptions, NetworkOptions, Packet, QoS,
+    TlsConfiguration, Transport,
 };
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 use std::sync::Arc;
 use std::time::Duration;
+use std::{error::Error, io};
 use tokio::sync::mpsc;
 use url::Url;
 
@@ -161,6 +163,112 @@ fn safe_url(raw: &str) -> String {
     url.to_string()
 }
 
+// Never format the transport error itself: its nested messages can contain
+// broker URLs, websocket paths, query tokens, or credentials.
+fn mqtt_error_category(error: &ConnectionError) -> &'static str {
+    if let ConnectionError::ConnectionRefused(code) = error {
+        use rumqttc::mqttbytes::v4::ConnectReturnCode;
+        return match code {
+            ConnectReturnCode::BadUserNamePassword | ConnectReturnCode::NotAuthorized => {
+                "Authentication rejected by broker"
+            }
+            _ => "Connection rejected by broker",
+        };
+    }
+    if matches!(
+        error,
+        ConnectionError::NetworkTimeout | ConnectionError::FlushTimeout
+    ) {
+        return "Network timed out";
+    }
+    let mut cause: Option<&(dyn Error + 'static)> = Some(error);
+    let mut io_category = None;
+    while let Some(current) = cause {
+        if let Some(tls) = current.downcast_ref::<rustls::Error>() {
+            return if matches!(tls, rustls::Error::InvalidCertificate(_)) {
+                "TLS certificate validation failed"
+            } else {
+                "TLS handshake failed"
+            };
+        }
+        if let Some(io) = current.downcast_ref::<io::Error>() {
+            if let Some(tls) = io
+                .get_ref()
+                .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+            {
+                return if matches!(tls, rustls::Error::InvalidCertificate(_)) {
+                    "TLS certificate validation failed"
+                } else {
+                    "TLS handshake failed"
+                };
+            }
+            io_category = Some(match io.kind() {
+                io::ErrorKind::NotFound => "DNS lookup failed",
+                io::ErrorKind::ConnectionRefused => "Connection refused",
+                io::ErrorKind::TimedOut => "Network timed out",
+                _ if io.raw_os_error() == Some(-2) => "DNS lookup failed", // EAI_NONAME on Linux
+                _ => "Network I/O failed",
+            });
+        }
+        cause = current.source();
+    }
+    if let Some(category) = io_category {
+        return category;
+    }
+    match error {
+        ConnectionError::Tls(_) => "TLS handshake failed",
+        ConnectionError::Websocket(_) | ConnectionError::WsConnect(_) => {
+            "WebSocket connection failed"
+        }
+        _ => "Connection failed",
+    }
+}
+
+#[cfg(test)]
+mod mqtt_error_tests {
+    use super::*;
+    use rumqttc::mqttbytes::v4::ConnectReturnCode;
+
+    #[test]
+    fn connection_errors_are_classified_without_echoing_details() {
+        let cases = [
+            (
+                ConnectionError::ConnectionRefused(ConnectReturnCode::NotAuthorized),
+                "Authentication rejected by broker",
+            ),
+            (
+                ConnectionError::ConnectionRefused(ConnectReturnCode::BadUserNamePassword),
+                "Authentication rejected by broker",
+            ),
+            (
+                ConnectionError::Io(io::Error::new(io::ErrorKind::NotFound, "secret DNS URL")),
+                "DNS lookup failed",
+            ),
+            (
+                ConnectionError::Io(io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    "secret broker URL",
+                )),
+                "Connection refused",
+            ),
+            (
+                ConnectionError::Io(io::Error::new(io::ErrorKind::TimedOut, "secret broker URL")),
+                "Network timed out",
+            ),
+            (
+                ConnectionError::Io(io::Error::other(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::UnknownIssuer,
+                ))),
+                "TLS certificate validation failed",
+            ),
+            (ConnectionError::NetworkTimeout, "Network timed out"),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(mqtt_error_category(&error), expected);
+        }
+    }
+}
+
 pub fn log(env: &std::collections::HashMap<String, String>, message: &str, warning: bool) {
     use chrono::Timelike;
     let now = chrono::Local::now();
@@ -292,13 +400,11 @@ async fn mqtt_source(
                 }
             }
             Ok(Ok(_)) => (),
-            Ok(Err(_err)) => {
+            Ok(Err(err)) => {
                 connected = false;
-                // Underlying transport errors may contain URL userinfo or
-                // query tokens; never log untrusted connection details.
                 log(
                     &env,
-                    &format!("[{name}] MQTT source error: Connection failed."),
+                    &format!("[{name}] MQTT source error: {}.", mqtt_error_category(&err)),
                     true,
                 );
                 log(&env, &format!("[{name}] MQTT source is offline."), true);
