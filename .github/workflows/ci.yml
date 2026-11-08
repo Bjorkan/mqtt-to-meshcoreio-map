@@ -35,6 +35,20 @@ jobs:
       - name: Run tests
         run: bun test
 
+      - name: Verify Bun configuration fixtures are current
+        run: |
+          bun tests/config-golden.mjs
+          git diff --exit-code -- tests/config-golden.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path rust/Cargo.toml --check
+
+      - name: Test configuration compatibility
+        run: cargo test --manifest-path rust/Cargo.toml --locked
+
   docker:
     name: Docker build
     runs-on: ubuntu-latest

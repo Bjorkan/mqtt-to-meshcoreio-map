@@ -1,0 +1,282 @@
+//! Compatibility configuration for the existing Bun bridge. Keep the public
+//! environment contract in sync with src/index.ts and src/map-log.ts.
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Source {
+    pub name: String,
+    pub url: String,
+    pub username: String,
+    pub password: String,
+    pub client_id: String,
+    pub topic_filter: String,
+    pub reconnect_period_ms: i64,
+    pub connect_timeout_ms: i64,
+    pub reject_unauthorized: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MapUploader {
+    pub enabled: bool,
+    pub api_url: String,
+    pub dry_run: bool,
+    pub min_reupload_interval_seconds: i64,
+    pub request_timeout_ms: i64,
+    pub max_queued_uploads: i64,
+    pub retries_allowed: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Config {
+    pub sources: Vec<Source>,
+    pub source_url: String,
+    pub source_user: String,
+    pub source_pass: String,
+    pub source_client_id: String,
+    pub topic_filter: String,
+    pub reconnect_period_ms: i64,
+    pub connect_timeout_ms: i64,
+    pub reject_unauthorized: bool,
+    pub map_uploader: MapUploader,
+}
+
+pub fn read_environment(directory: &Path) -> HashMap<String, String> {
+    // Bun loads .env, the NODE_ENV-specific file, and .env.local (except
+    // under NODE_ENV=test). Exported variables take precedence over all files.
+    // Missing files are normal (e.g. Compose env_file).
+    let mode = std::env::var("NODE_ENV").unwrap_or_else(|_| "development".into());
+    let mut files = vec![".env".to_owned(), format!(".env.{mode}")];
+    if mode != "test" {
+        files.push(".env.local".into());
+    }
+    files.push(format!(".env.{mode}.local"));
+    let contents = files
+        .iter()
+        .filter_map(|name| std::fs::read_to_string(directory.join(name)).ok())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut env: HashMap<String, String> =
+        dotenvy::from_read_iter(bun_expansion_syntax(&contents).as_bytes())
+            .filter_map(Result::ok)
+            .collect();
+    env.extend(std::env::vars());
+    env
+}
+
+// dotenvy treats $SOURCE_1_NAME as $SOURCE followed by _1_NAME; Bun treats
+// the whole identifier as the variable. Normalize only bare expansions before
+// passing the file to dotenvy's quote/comment parser. Keep escaped dollars.
+fn bun_expansion_syntax(contents: &str) -> String {
+    let mut chars = contents.chars().peekable();
+    let mut output = String::with_capacity(contents.len());
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            output.push(ch);
+            if let Some(next) = chars.next() {
+                output.push(next);
+            }
+        } else if ch == '$'
+            && chars
+                .peek()
+                .is_some_and(|c| c.is_ascii_alphabetic() || *c == '_')
+        {
+            output.push_str("${");
+            while chars
+                .peek()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
+            {
+                output.push(chars.next().expect("peeked character"));
+            }
+            output.push('}');
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+fn get<'a>(env: &'a HashMap<String, String>, key: &str) -> &'a str {
+    env.get(key).map(String::as_str).unwrap_or("")
+}
+
+fn or<'a>(first: &'a str, second: &'a str) -> &'a str {
+    if first.is_empty() { second } else { first }
+}
+
+fn number(value: &str, fallback: i64, min: i64, max: i64) -> i64 {
+    if value.trim().is_empty() {
+        return fallback;
+    }
+    // JavaScript Number() accepts decimal, scientific, and radix-prefixed
+    // integers, and requires the result to be a finite integral Number.
+    let trimmed = value.trim();
+    let parsed = if let Some(digits) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        i64::from_str_radix(digits, 16).ok().map(|v| v as f64)
+    } else if let Some(digits) = trimmed
+        .strip_prefix("0b")
+        .or_else(|| trimmed.strip_prefix("0B"))
+    {
+        i64::from_str_radix(digits, 2).ok().map(|v| v as f64)
+    } else if let Some(digits) = trimmed
+        .strip_prefix("0o")
+        .or_else(|| trimmed.strip_prefix("0O"))
+    {
+        i64::from_str_radix(digits, 8).ok().map(|v| v as f64)
+    } else {
+        trimmed.parse::<f64>().ok()
+    };
+    match parsed {
+        Some(n) if n.is_finite() && n.fract() == 0.0 && n >= min as f64 && n <= max as f64 => {
+            n as i64
+        }
+        _ => fallback,
+    }
+}
+
+fn boolean(value: &str, fallback: bool) -> bool {
+    if value.trim().is_empty() {
+        fallback
+    } else {
+        matches!(value.to_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    }
+}
+
+pub fn resolve(env: &HashMap<String, String>) -> Config {
+    let mut sources = Vec::new();
+    let mut index = 1usize;
+    while let Some(url) = env.get(&format!("SOURCE_{index}_MQTT_URL")) {
+        let prefix = format!("SOURCE_{index}_");
+        let field = |suffix: &str| {
+            env.get(&format!("{prefix}{suffix}"))
+                .map(String::as_str)
+                .unwrap_or("")
+        };
+        sources.push(Source {
+            name: or(field("NAME"), url).to_owned(),
+            url: url.clone(),
+            username: field("MQTT_USERNAME").to_owned(),
+            password: field("MQTT_PASSWORD").to_owned(),
+            client_id: or(
+                field("CLIENT_ID"),
+                &format!("mqtt-to-meshcoreio-map-{index}"),
+            )
+            .to_owned(),
+            topic_filter: or(field("TOPIC_FILTER"), "meshcore/#").to_owned(),
+            reconnect_period_ms: number(
+                or(
+                    field("RECONNECT_PERIOD_MS"),
+                    get(env, "MQTT_RECONNECT_PERIOD_MS"),
+                ),
+                5000,
+                250,
+                300000,
+            ),
+            connect_timeout_ms: number(
+                or(
+                    field("CONNECT_TIMEOUT_MS"),
+                    get(env, "MQTT_CONNECT_TIMEOUT_MS"),
+                ),
+                30000,
+                1000,
+                300000,
+            ),
+            reject_unauthorized: boolean(
+                or(
+                    field("REJECT_UNAUTHORIZED"),
+                    get(env, "SOURCE_REJECT_UNAUTHORIZED"),
+                ),
+                true,
+            ),
+        });
+        index += 1;
+    }
+    if sources.is_empty() {
+        let url = or(get(env, "SOURCE_MQTT_URL"), "mqtt://localhost:1883");
+        sources.push(Source {
+            name: or(get(env, "SOURCE_1_NAME"), or(get(env, "SOURCE_NAME"), url)).to_owned(),
+            url: url.to_owned(),
+            username: get(env, "SOURCE_MQTT_USERNAME").to_owned(),
+            password: get(env, "SOURCE_MQTT_PASSWORD").to_owned(),
+            client_id: or(get(env, "SOURCE_CLIENT_ID"), "mqtt-to-meshcoreio-map").to_owned(),
+            topic_filter: or(get(env, "TOPIC_FILTER"), "meshcore/#").to_owned(),
+            reconnect_period_ms: number(get(env, "MQTT_RECONNECT_PERIOD_MS"), 5000, 250, 300000),
+            connect_timeout_ms: number(get(env, "MQTT_CONNECT_TIMEOUT_MS"), 30000, 1000, 300000),
+            reject_unauthorized: boolean(get(env, "SOURCE_REJECT_UNAUTHORIZED"), true),
+        });
+    }
+    let first = &sources[0];
+    Config {
+        source_url: first.url.clone(),
+        source_user: first.username.clone(),
+        source_pass: first.password.clone(),
+        source_client_id: first.client_id.clone(),
+        topic_filter: first.topic_filter.clone(),
+        reconnect_period_ms: first.reconnect_period_ms,
+        connect_timeout_ms: first.connect_timeout_ms,
+        reject_unauthorized: first.reject_unauthorized,
+        sources,
+        map_uploader: MapUploader {
+            enabled: true,
+            api_url: or(
+                get(env, "MESHCOREIO_API_URL"),
+                "https://map.meshcore.io/api/v1/uploader/node",
+            )
+            .to_owned(),
+            dry_run: boolean(get(env, "MESHCOREIO_DRY_RUN"), false),
+            min_reupload_interval_seconds: number(
+                get(env, "MESHCOREIO_MIN_REUPLOAD_SECONDS"),
+                3600,
+                0,
+                86400,
+            ),
+            request_timeout_ms: number(
+                get(env, "MESHCOREIO_REQUEST_TIMEOUT_MS"),
+                10000,
+                1000,
+                120000,
+            ),
+            max_queued_uploads: number(get(env, "MESHCOREIO_MAX_QUEUED_UPLOADS"), 25, 1, 10000),
+            retries_allowed: number(get(env, "MESHCOREIO_RETRIES_ALLOWED"), 3, 0, 100),
+        },
+    }
+}
+
+pub fn signing_public_key(env: &HashMap<String, String>) -> Result<Option<String>, &'static str> {
+    use ed25519_dalek::{Signer, SigningKey, Verifier};
+    let value = get(env, "MESHCOREIO_PRIVATE_KEY").trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let bytes = hex::decode(value).map_err(
+        |_| "MESHCOREIO_PRIVATE_KEY is invalid: expected a 64-character hex ed25519 private seed.",
+    )?;
+    let seed: [u8; 32] = bytes.try_into().map_err(
+        |_| "MESHCOREIO_PRIVATE_KEY is invalid: expected a 64-character hex ed25519 private seed.",
+    )?;
+    let key = SigningKey::from_bytes(&seed);
+    let message = b"mqtt-to-meshcoreio-map signing self-test";
+    key.verifying_key().verify(message, &key.sign(message))
+        .map_err(|_| "MESHCOREIO_PRIVATE_KEY is invalid: the value could not be used as an ed25519 private seed.")?;
+    Ok(Some(hex::encode(key.verifying_key().to_bytes())))
+}
+
+pub fn log_color(env: &HashMap<String, String>) -> bool {
+    !env.contains_key("NO_COLOR") && get(env, "LOG_COLOR") != "false"
+}
+
+pub fn time_zone(env: &HashMap<String, String>) -> Option<&str> {
+    let tz = get(env, "TZ").trim();
+    if tz.is_empty() || tz.parse::<chrono_tz::Tz>().is_err() {
+        None
+    } else {
+        Some(tz)
+    }
+}
