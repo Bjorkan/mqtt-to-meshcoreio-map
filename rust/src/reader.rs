@@ -105,11 +105,38 @@ fn observer_id(json: &Value, topic: &str) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+fn js_whitespace(ch: char) -> bool {
+    matches!(ch, '\t'..='\r' | ' ' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
+}
+
 fn number(value: &Value) -> Option<f64> {
     match value {
         Value::Number(n) => n.as_f64().filter(|n| n.is_finite()),
-        Value::String(s) if !s.trim().is_empty() => {
-            s.trim().parse::<f64>().ok().filter(|n| n.is_finite())
+        Value::String(s) if !s.trim_matches(js_whitespace).is_empty() => {
+            let text = s.trim_matches(js_whitespace);
+            // Number(string) accepts unsigned hexadecimal, binary and octal
+            // literals in addition to decimal notation. parse::<f64>() does not.
+            let radix = if text.starts_with("0x") || text.starts_with("0X") {
+                Some(16)
+            } else if text.starts_with("0b") || text.starts_with("0B") {
+                Some(2)
+            } else if text.starts_with("0o") || text.starts_with("0O") {
+                Some(8)
+            } else {
+                None
+            };
+            let parsed = if let Some(radix) = radix {
+                let digits = &text[2..];
+                if digits.is_empty() {
+                    return None;
+                }
+                digits.chars().try_fold(0.0_f64, |acc, digit| {
+                    Some(acc * f64::from(radix) + f64::from(digit.to_digit(radix)?))
+                })
+            } else {
+                text.parse::<f64>().ok()
+            };
+            parsed.filter(|n| n.is_finite())
         }
         _ => None,
     }
@@ -310,5 +337,20 @@ impl Reader {
             retries_left: self.retries_allowed,
             attempts: 0,
         })
+    }
+}
+
+#[cfg(test)]
+mod number_tests {
+    use super::number;
+    use serde_json::json;
+
+    #[test]
+    fn number_string_matches_js_whitespace_and_rejects_invalid_radix() {
+        assert_eq!(number(&json!("\u{feff}0x36A\u{feff}")), Some(874.0));
+        assert_eq!(number(&json!("\u{0085}0x36A\u{0085}")), None);
+        for invalid in ["0x", "0b102", "0o8", "-0x36A", "0x36_A"] {
+            assert_eq!(number(&json!(invalid)), None, "{invalid}");
+        }
     }
 }

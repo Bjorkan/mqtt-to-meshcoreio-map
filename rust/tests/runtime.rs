@@ -95,3 +95,39 @@ fn bun_verified_packet_and_request_vectors() {
         }
     }
 }
+
+#[test]
+fn prefixed_numeric_status_fields_allow_verified_adverts() {
+    let vectors: Vec<Vector> =
+        serde_json::from_str(include_str!("../../tests/runtime-golden.json")).unwrap();
+    let packet = &vectors[0].packet;
+    let config = resolve(&HashMap::new());
+    let cases = [
+        ("0x36A", "0b1111101", "0o10", "0X8"),
+        ("0B1101101010", "0O175", "0x8", "8"),
+    ];
+    for (freq, bw, sf, cr) in cases {
+        let mut reader = Reader::new(&config.map_uploader);
+        let status = json!({"origin_id": "a1".repeat(32), "params": {
+            "freq": freq, "bw": bw, "sf": sf, "cr": cr
+        }});
+        let topic = format!("meshcore/STO/{}/status", "a1".repeat(32));
+        assert!(
+            reader
+                .receive(&topic, status.to_string().as_bytes(), 1_800_000_500_000)
+                .is_none()
+        );
+        let advert = json!({"origin_id": "a1".repeat(32), "raw": packet});
+        let job = reader
+            .receive(
+                &topic.replace("/status", "/packets"),
+                advert.to_string().as_bytes(),
+                1_800_000_500_000,
+            )
+            .expect("prefixed radio fields should allow an advert");
+        assert_eq!(
+            (job.radio.freq, job.radio.bw, job.radio.sf, job.radio.cr),
+            (874.0, 125.0, 8.0, 8.0)
+        );
+    }
+}
