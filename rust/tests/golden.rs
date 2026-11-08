@@ -92,6 +92,77 @@ fn dotenv_preserves_bun_quote_comment_and_expansion_behavior() {
 }
 
 #[test]
+fn dotenv_expands_after_all_files_and_keeps_bun_values() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".env"), "PARITY_FORWARD=mqtt://$PARITY_BROKER:1883\nPARITY_LATER=$PARITY_CROSS\nPARITY_NAME=Primary Broker\nPARITY_PASSWORD=two words\nPARITY_BACKTICK=`Primary Broker`\nPARITY_FALLBACK=${PARITY_MISSING:-localhost}\nPARITY_TOPIC=meshcore/#\nPARITY_EMPTY=\nPARITY_EMPTY_FALLBACK=${PARITY_EMPTY:-default}\nPARITY_CYCLE=$PARITY_CYCLE\nPARITY_NESTED=${PARITY_MISSING:-${PARITY_BROKER}}\nPARITY_INVALID=${PARITY_MISSING-default}\nPARITY_UNTERMINATED=${PARITY_BROKER\nPARITY_COLON: colon value\nPARITY_COLON_EQUALS: value=present\nPARITY_ESCAPED=\"first\\nsecond\"\nPARITY_SLASH=\"first\\\\nsecond\"\n").unwrap();
+    let mode = std::env::var("NODE_ENV").unwrap_or_else(|_| "development".into());
+    std::fs::write(
+        dir.path().join(format!(".env.{mode}")),
+        "PARITY_BROKER=mqtt.example.com\nPARITY_CROSS=from-other-file\n",
+    )
+    .unwrap();
+    let env = read_environment(dir.path());
+    let cases = [
+        ("PARITY_FORWARD", "mqtt://mqtt.example.com:1883"),
+        ("PARITY_LATER", "from-other-file"),
+        ("PARITY_NAME", "Primary Broker"),
+        ("PARITY_PASSWORD", "two words"),
+        ("PARITY_BACKTICK", "Primary Broker"),
+        ("PARITY_FALLBACK", "localhost"),
+        ("PARITY_TOPIC", "meshcore/"),
+        ("PARITY_EMPTY_FALLBACK", ""),
+        ("PARITY_CYCLE", "$PARITY_CYCLE"),
+        ("PARITY_NESTED", "mqtt.example.com"),
+        ("PARITY_INVALID", "${PARITY_MISSING-default}"),
+        ("PARITY_UNTERMINATED", "${PARITY_BROKER"),
+        ("PARITY_COLON", "colon value"),
+        ("PARITY_COLON_EQUALS", "value=present"),
+        ("PARITY_ESCAPED", "first\nsecond"),
+        ("PARITY_SLASH", "first\\\\nsecond"),
+    ];
+    let names = cases.iter().map(|(key, _)| *key).collect::<Vec<_>>();
+    let script = format!(
+        "console.log(JSON.stringify(Object.fromEntries({}.map(k => [k, process.env[k]]))))",
+        serde_json::to_string(&names).unwrap()
+    );
+    let bun = std::process::Command::new("bun")
+        .arg("-e")
+        .arg(script)
+        .current_dir(dir.path())
+        .output()
+        .expect("bun is needed for parity fixtures");
+    assert!(bun.status.success());
+    let baseline: serde_json::Value = serde_json::from_slice(&bun.stdout).unwrap();
+    for (key, expected) in cases {
+        assert_eq!(env.get(key).map(String::as_str), Some(expected), "{key}");
+        assert_eq!(
+            env.get(key).map(String::as_str),
+            baseline[key].as_str(),
+            "Bun: {key}"
+        );
+    }
+}
+
+#[test]
+fn unmatched_quote_does_not_consume_subsequent_assignment() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".env"),
+        "PARITY_UNCLOSED=\"unfinished\nPARITY_FOLLOWING=present\n",
+    )
+    .unwrap();
+    let env = read_environment(dir.path());
+    assert_eq!(
+        env.get("PARITY_UNCLOSED").map(String::as_str),
+        Some("\"unfinished")
+    );
+    assert_eq!(
+        env.get("PARITY_FOLLOWING").map(String::as_str),
+        Some("present")
+    );
+}
+
+#[test]
 fn bun_environment_files_keep_mode_and_local_precedence() {
     let dir = tempfile::tempdir().unwrap();
     let mode = std::env::var("NODE_ENV").unwrap_or_else(|_| "development".into());

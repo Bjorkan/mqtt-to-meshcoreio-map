@@ -55,46 +55,226 @@ pub fn read_environment(directory: &Path) -> HashMap<String, String> {
         files.push(".env.local".into());
     }
     files.push(format!(".env.{mode}.local"));
-    let contents = files
-        .iter()
-        .filter_map(|name| std::fs::read_to_string(directory.join(name)).ok())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let mut env: HashMap<String, String> =
-        dotenvy::from_read_iter(bun_expansion_syntax(&contents).as_bytes())
-            .filter_map(Result::ok)
-            .collect();
-    env.extend(std::env::vars());
-    env
+    let mut raw = HashMap::new();
+    for file in files {
+        if let Ok(contents) = std::fs::read_to_string(directory.join(file)) {
+            parse_env_file(&contents, &mut raw);
+        }
+    }
+    // Bun merges all files and process variables before expanding references.
+    let mut expanded: HashMap<String, String> = std::env::vars().collect();
+    raw.extend(expanded.clone());
+    let mut keys = raw.keys().collect::<Vec<_>>();
+    keys.sort();
+    for key in keys {
+        expand_key(key, &raw, &mut expanded, &mut Vec::new());
+    }
+    expanded
 }
 
-// dotenvy treats $SOURCE_1_NAME as $SOURCE followed by _1_NAME; Bun treats
-// the whole identifier as the variable. Normalize only bare expansions before
-// passing the file to dotenvy's quote/comment parser. Keep escaped dollars.
-fn bun_expansion_syntax(contents: &str) -> String {
-    let mut chars = contents.chars().peekable();
-    let mut output = String::with_capacity(contents.len());
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            output.push(ch);
-            if let Some(next) = chars.next() {
-                output.push(next);
-            }
-        } else if ch == '$'
-            && chars
-                .peek()
-                .is_some_and(|c| c.is_ascii_alphabetic() || *c == '_')
+fn parse_env_file(contents: &str, values: &mut HashMap<String, String>) {
+    let mut lines = contents.lines();
+    while let Some(line) = lines.next() {
+        let line = line.trim_start();
+        let line = line
+            .strip_prefix("export")
+            .and_then(|rest| {
+                rest.starts_with(char::is_whitespace)
+                    .then(|| rest.trim_start())
+            })
+            .unwrap_or(line);
+        let Some(separator) = line.find(['=', ':']) else {
+            continue;
+        };
+        let (key, value) = (&line[..separator], &line[separator + 1..]);
+        if line.as_bytes()[separator] == b':' && !value.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let key = key.trim();
+        if key.is_empty()
+            || !key
+                .bytes()
+                .next()
+                .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+            || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
         {
-            output.push_str("${");
-            while chars
-                .peek()
-                .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
-            {
-                output.push(chars.next().expect("peeked character"));
+            continue;
+        }
+        let value = value.trim_start();
+        let parsed = if let Some(quote @ ('"' | '\'' | '`')) = value.chars().next() {
+            let mut body = value[quote.len_utf8()..].to_owned();
+            let closing = |text: &str| {
+                text.char_indices()
+                    .find(|(i, ch)| {
+                        *ch == quote
+                            && text[..*i].bytes().rev().take_while(|b| *b == b'\\').count() % 2 == 0
+                    })
+                    .map(|(i, _)| i)
+            };
+            // If no closing quote exists in the file, Bun keeps the opening
+            // quote as text and continues parsing the next assignment.
+            let mut probe = lines.clone();
+            let mut has_closing = closing(&body).is_some();
+            while !has_closing {
+                let Some(next) = probe.next() else { break };
+                body.push('\n');
+                body.push_str(next);
+                has_closing = closing(&body).is_some();
             }
-            output.push('}');
+            if !has_closing {
+                value.to_owned()
+            } else {
+                body = value[quote.len_utf8()..].to_owned();
+                loop {
+                    // A quote preceded by a backslash does not terminate the value.
+                    if let Some(end) = closing(&body) {
+                        body.truncate(end);
+                        break;
+                    }
+                    let Some(next) = lines.next() else { break };
+                    body.push('\n');
+                    body.push_str(next);
+                }
+                if quote == '"' {
+                    unescape_double_quote(&body)
+                } else {
+                    body
+                }
+            }
         } else {
+            value.split('#').next().unwrap_or("").trim_end().to_owned()
+        };
+        values.insert(key.to_owned(), parsed);
+    }
+}
+
+fn unescape_double_quote(value: &str) -> String {
+    let mut result = String::new();
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && matches!(chars.peek(), Some('n' | 'r')) {
+            result.push(if chars.next() == Some('n') {
+                '\n'
+            } else {
+                '\r'
+            });
+        } else if ch == '\\' && chars.peek() == Some(&'\\') {
+            result.push(ch);
+            result.push(chars.next().expect("peeked backslash"));
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+fn expand_key(
+    key: &str,
+    raw: &HashMap<String, String>,
+    expanded: &mut HashMap<String, String>,
+    visiting: &mut Vec<String>,
+) -> String {
+    if let Some(value) = expanded.get(key) {
+        return value.clone();
+    }
+    let Some(value) = raw.get(key) else {
+        return String::new();
+    };
+    if visiting.iter().any(|active| active == key) || visiting.len() >= 128 {
+        return value.clone();
+    }
+    visiting.push(key.to_owned());
+    let output = expand_value(value, raw, expanded, visiting);
+    visiting.pop();
+    expanded.insert(key.to_owned(), output.clone());
+    output
+}
+
+fn expand_value(
+    value: &str,
+    raw: &HashMap<String, String>,
+    expanded: &mut HashMap<String, String>,
+    visiting: &mut Vec<String>,
+) -> String {
+    let mut output = String::new();
+    let mut rest = value;
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix("\\$") {
+            output.push('$');
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix('$') {
+            let (name, fallback, tail) = if let Some(block) = after.strip_prefix('{') {
+                let mut depth = 1usize;
+                let mut end = None;
+                for (i, ch) in block.char_indices() {
+                    if ch == '{' {
+                        depth += 1;
+                    }
+                    if ch == '}'
+                        && block[..i].bytes().rev().take_while(|b| *b == b'\\').count() % 2 == 0
+                    {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(i);
+                            break;
+                        }
+                    }
+                }
+                if let Some(end) = end {
+                    let (name, fallback) = block[..end]
+                        .split_once(":-")
+                        .map_or((&block[..end], None), |(name, fallback)| {
+                            (name, Some(fallback))
+                        });
+                    (name, fallback, &block[end + 1..])
+                } else {
+                    ("", None, after)
+                }
+            } else {
+                let len = after
+                    .bytes()
+                    .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+                    .count();
+                (&after[..len], None, &after[len..])
+            };
+            if !name.is_empty()
+                && name
+                    .bytes()
+                    .next()
+                    .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+                && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            {
+                if raw.contains_key(name) {
+                    output.push_str(&expand_key(name, raw, expanded, visiting));
+                } else if let Some(default) = fallback {
+                    if visiting.len() < 128 {
+                        output.push_str(&expand_value(default, raw, expanded, visiting));
+                    } else {
+                        output.push_str(default);
+                    }
+                } else {
+                    // Missing references resolve to the empty string.
+                }
+                rest = tail;
+            } else {
+                if let Some(block) = after.strip_prefix('{') {
+                    if let Some(end) = block.find('}') {
+                        output.push('$');
+                        output.push_str(&after[..end + 2]);
+                        rest = &block[end + 1..];
+                    } else {
+                        output.push_str(rest);
+                        break;
+                    }
+                } else {
+                    output.push('$');
+                    rest = after;
+                }
+            }
+        } else {
+            let ch = rest.chars().next().expect("nonempty value");
             output.push(ch);
+            rest = &rest[ch.len_utf8()..];
         }
     }
     output
