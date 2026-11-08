@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub mod protocol;
+pub mod reader;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -45,6 +45,11 @@ jobs:
           bun tests/protocol-golden.mjs
           git diff --exit-code -- tests/protocol-golden.json
 
+      - name: Verify observer and request fixtures are current
+        run: |
+          bun tests/runtime-golden.mjs
+          git diff --exit-code -- tests/runtime-golden.json
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 

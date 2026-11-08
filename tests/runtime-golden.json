@@ -1,0 +1,56 @@
+[
+  {
+    "name": "comma",
+    "status": "{\"origin\":\"SE-STO-OBSERVER\",\"origin_id\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"radio\":\"869.617981,62.5,8,8\"}",
+    "topic": "meshcore/STO/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "packet": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b0195857eb99b2afe7cd0cc43d5340d2fec3d8a56a08774a30b022dc024b8e03625d0412d7391a0fc4370ee7f5fcc98b3fa74efa570e2e371d84c815ff72343078253452d53544f2d54455354",
+    "request": {
+      "data": "{\"params\":{\"freq\":869.618,\"bw\":62.5,\"sf\":8,\"cr\":8},\"links\":[\"meshcore://1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b0195857eb99b2afe7cd0cc43d5340d2fec3d8a56a08774a30b022dc024b8e03625d0412d7391a0fc4370ee7f5fcc98b3fa74efa570e2e371d84c815ff72343078253452d53544f2d54455354\"]}",
+      "signature": "eff2303379896e6a86670ba04b398f0c6194007597e8afa70dc0f3ae3d6fef56038cea296570683301eb1fa744ccc41682e1a858d289be3d4cef7c484c485f0f",
+      "publicKey": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+    }
+  },
+  {
+    "name": "direct-hz",
+    "status": "{\"origin\":\"SE-STO-OBSERVER\",\"origin_id\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"params\":{\"freq\":869617981,\"bw\":62500,\"sf\":8,\"cr\":8}}",
+    "topic": "meshcore/STO/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "packet": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0f4d3496bd7fd6604b77f942820d979306a95009113a3b30114cd35ac534cbeed50badc1a1cb574422be1eff4913f8d8a687edfc91f975c843a26d512678288acfb39c30a8253452d53544f2d54455354",
+    "request": {
+      "data": "{\"params\":{\"freq\":869.618,\"cr\":8,\"sf\":8,\"bw\":62.5},\"links\":[\"meshcore://1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0f4d3496bd7fd6604b77f942820d979306a95009113a3b30114cd35ac534cbeed50badc1a1cb574422be1eff4913f8d8a687edfc91f975c843a26d512678288acfb39c30a8253452d53544f2d54455354\"]}",
+      "signature": "da689afc1f80d5a818987f35f541db484d7be6e3c8c273e3f712e3ae1bdab19ae4807edacd2e9532adf48e1fb37b9d6122e24804f38da1cf9408f2dfd71e5507",
+      "publicKey": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+    }
+  },
+  {
+    "name": "text-radio",
+    "status": "{\"origin\":\"SE-STO-OBSERVER\",\"origin_id\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"radio\":\"869.617981 MHz · SF8 · BW62.5 · CR8\"}",
+    "topic": "meshcore/STO/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "packet": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0e8d5496b645feb584a3e9b6074b1f0b6c54c485dc747aa94f8d83d451bb21aab3b18d485603a12c65f30d3ca496f30bcf84d933cc1e6dd31ad6723bd1988145560b5b0088253452d53544f2d54455354",
+    "request": {
+      "data": "{\"params\":{\"freq\":869.618,\"bw\":62.5,\"sf\":8,\"cr\":8},\"links\":[\"meshcore://1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0e8d5496b645feb584a3e9b6074b1f0b6c54c485dc747aa94f8d83d451bb21aab3b18d485603a12c65f30d3ca496f30bcf84d933cc1e6dd31ad6723bd1988145560b5b0088253452d53544f2d54455354\"]}",
+      "signature": "ef3dbe7de680f173f29ed2c3744c12a8faaa0d48fcf0696c287ea7886f3dec91ea9b5a127b7cd43dadc010aff7cad91544612a95ef7d0fd2e199c68a8e285303",
+      "publicKey": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+    }
+  },
+  {
+    "name": "invalid-signature",
+    "status": "{\"origin\":\"SE-STO-OBSERVER\",\"origin_id\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"radio\":\"869.617981,62.5,8,8\"}",
+    "topic": "meshcore/STO/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "packet": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496bfe95857eb99b2afe7cd0cc43d5340d2fec3d8a56a08774a30b022dc024b8e03625d0412d7391a0fc4370ee7f5fcc98b3fa74efa570e2e371d84c815ff72343078253452d53544f2d54455354",
+    "request": null
+  },
+  {
+    "name": "chat",
+    "status": "{\"origin\":\"SE-STO-OBSERVER\",\"origin_id\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"radio\":\"869.617981,62.5,8,8\"}",
+    "topic": "meshcore/STO/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "packet": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f000d2496b5da371b6d01f9a015e65470298f94beb6c23ff2a1d5d33eb20a61761b0e8c7ea9ffe04f4a9907d18283571799f8985455778b6512a9ed25a91be45f0402f1a008153452d53544f2d54455354",
+    "request": null
+  },
+  {
+    "name": "invalid-text-radio-units",
+    "status": "{\"origin\":\"SE-STO-OBSERVER\",\"origin_id\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"radio\":\"869000000 MHz · BW62500 · SF8 · CR8\"}",
+    "topic": "meshcore/STO/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "packet": "1100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0dcd7496b66ceaf318468f0a629b5d8519b819770f9ec03f88782bfb2e33692e94cdad235e12f3791a0ab979d138344ef65deeac707fe624a625f1e099a02fd7f979335038253452d53544f2d54455354",
+    "request": null
+  }
+]
