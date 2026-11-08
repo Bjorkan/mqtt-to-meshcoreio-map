@@ -7,6 +7,7 @@ use std::path::Path;
 pub mod protocol;
 pub mod queue;
 pub mod reader;
+pub mod service;
 pub mod uploader;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
