@@ -88,7 +88,7 @@ SOURCE_2_MQTT_URL=mqtt://broker2.example:1883
 
 Sources must be numbered starting at `SOURCE_1` without gaps. `SOURCE_N_RECONNECT_PERIOD_MS`, `SOURCE_N_CONNECT_TIMEOUT_MS`, and `SOURCE_N_REJECT_UNAUTHORIZED` override the global defaults per source. See `.env.example` for the full list.
 
-`SOURCE_MQTT_URL` is passed to MQTT.js and can use standard MQTT URL schemes:
+`SOURCE_MQTT_URL` accepts the existing MQTT URL schemes:
 
 ```env
 SOURCE_MQTT_URL=mqtt://your-broker:1883
@@ -135,13 +135,37 @@ Note that observer radio parameters are memory-only as well: after a restart the
 
 ## Development
 
-The project runs on [Bun](https://bun.sh):
+The deployed service runs as a Rust binary. Existing `.env` files and Compose
+`env_file` settings work unchanged. The binary automatically loads `.env` in
+its working directory (including Bun's mode-specific and local overrides),
+with exported environment variables taking precedence. The original Bun
+implementation remains in `src/` as a regression baseline. To run checks:
 
 ```bash
 bun install
 bun run typecheck
 bun test
 bun run lint
-bun run format
+cargo fmt --manifest-path rust/Cargo.toml --check
+cargo test --manifest-path rust/Cargo.toml --locked
 docker build -t mqtt-to-meshcoreio-map .
 ```
+
+To execute the binary directly, use `cargo run --manifest-path rust/Cargo.toml`
+from the directory containing your `.env`. `Dockerfile.bun` retains the
+original image for parity testing.
+
+Before a production rollout, compare the exact existing deployment files
+without starting either service or printing credentials:
+
+```bash
+PRODUCTION_ENV_DIR=/path/to/deployment \
+  cargo test --manifest-path rust/Cargo.toml --test golden -- --ignored
+```
+
+The directory must contain the unmodified `.env` and `compose.yaml` files.
+This check compares Bun's resolved configuration with Rust's in memory. The
+normal test suite performs the same comparison with unchanged copies of
+`.env.example` and `compose.yaml.example`; `tests/compose-smoke.sh` also runs
+that unchanged example deployment with the Rust image. A staging run against
+the actual broker is still recommended before replacing a live instance.

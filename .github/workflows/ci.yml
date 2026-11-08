@@ -56,8 +56,14 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --manifest-path rust/Cargo.toml --check
 
-      - name: Test configuration compatibility
-        run: cargo test --manifest-path rust/Cargo.toml --locked
+      - name: Lint Rust
+        run: cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features --locked -- -D warnings
+
+      - name: Test Rust and Bun parity
+        run: cargo test --manifest-path rust/Cargo.toml --all-targets --locked
+
+      - name: Build release binary
+        run: cargo build --manifest-path rust/Cargo.toml --release --locked
 
   docker:
     name: Docker build
@@ -98,3 +104,6 @@ jobs:
 
           docker logs "$container_id"
           exit 1
+
+      - name: Smoke test unchanged Compose example
+        run: bash tests/compose-smoke.sh mqtt-to-meshcoreio-map:ci
