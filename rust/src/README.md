@@ -4,8 +4,8 @@ These Rust modules implement the executable shipped in the container:
 
 | File          | Responsibility                                                                          |
 | ------------- | --------------------------------------------------------------------------------------- |
-| `main.rs`     | Load the environment, resolve configuration, start the service.                         |
-| `lib.rs`      | Parse Bun-compatible dotenv and environment settings; validate the signing seed.        |
+| `main.rs`     | Load the environment, validate configuration on request, start the service.             |
+| `lib.rs`      | Parse dotenv and environment settings; validate the signing seed.                       |
 | `service.rs`  | Connect to MQTT sources, handle messages, pace uploads, log outcomes, and stop cleanly. |
 | `reader.rs`   | Track observer radio status, extract packet bytes, and prepare eligible advert jobs.    |
 | `protocol.rs` | Parse MeshCore advert packets and verify their Ed25519 signatures.                      |

@@ -65,8 +65,8 @@ fn mqtt_options(source: &Source) -> Result<MqttOptions, String> {
     // Both rumqttc and reqwest enable rustls with different crypto backends;
     // select one explicitly before building any TLS configuration.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    // MQTT.js accepts an explicitly empty numbered URL and uses its default
-    // localhost broker, while retaining the empty string in resolved config.
+    // An explicitly empty numbered URL uses the localhost broker, while
+    // retaining the empty string in resolved config.
     let broker_url = if source.url.is_empty() {
         "mqtt://localhost:1883"
     } else {
@@ -102,7 +102,7 @@ fn mqtt_options(source: &Source) -> Result<MqttOptions, String> {
     // carry extra fields; allow larger bounded frames before Reader applies
     // its packet-specific limit.
     options.set_max_packet_size(1024 * 1024, 10 * 1024);
-    // MQTT.js URL userinfo overrides username/password passed as options.
+    // URL userinfo overrides username/password passed as options.
     let username = if url.username().is_empty() {
         source.username.clone()
     } else {
@@ -432,6 +432,7 @@ pub async fn run(
     config: Config,
     env: std::collections::HashMap<String, String>,
 ) -> Result<(), String> {
+    validate_api_url(&config.map_uploader.api_url)?;
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     for source in &config.sources {
         mqtt_options(source)?;
@@ -554,6 +555,29 @@ pub async fn run(
     }
     if let Some(upload) = active_upload {
         upload.abort();
+    }
+    Ok(())
+}
+
+/// Validate effective environment settings without opening network connections.
+/// Errors must not include configured broker URLs or credentials.
+pub fn check_config(
+    config: &Config,
+    env: &std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    validate_api_url(&config.map_uploader.api_url)?;
+    for source in &config.sources {
+        mqtt_options(source)?;
+    }
+    let _ = Uploader::new(config.map_uploader.clone(), env)?;
+    Ok(())
+}
+
+fn validate_api_url(raw: &str) -> Result<(), String> {
+    // Do not format untrusted URLs: they may contain userinfo or access tokens.
+    let url = Url::parse(raw).map_err(|_| "invalid MeshCore.io API URL".to_owned())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("invalid MeshCore.io API URL: expected an HTTP(S) endpoint".into());
     }
     Ok(())
 }

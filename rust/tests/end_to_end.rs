@@ -1,4 +1,4 @@
-//! Compare real Bun and Rust MQTT-to-HTTP exchanges with local peers only.
+//! Exercise the Rust MQTT-to-HTTP exchange with local peers only.
 use serde_json::{Value, json};
 use std::process::Stdio;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -45,7 +45,7 @@ async fn publish(stream: &mut TcpStream, topic: &str, body: &[u8]) {
     stream.write_all(&frame).await.unwrap();
 }
 
-async fn exchange(binary: &str, vector: &Value) -> Value {
+async fn exchange(vector: &Value) -> Value {
     let broker = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -53,11 +53,7 @@ async fn exchange(binary: &str, vector: &Value) -> Value {
         "SOURCE_MQTT_URL=mqtt://{}\nMESHCOREIO_API_URL=http://{}\nMESHCOREIO_PRIVATE_KEY={}\nLOG_COLOR=false\n",
         broker.local_addr().unwrap(), api.local_addr().unwrap(), "01".repeat(32)
     )).unwrap();
-    let mut cmd = Command::new(binary);
-    if binary == "bun" {
-        cmd.arg(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/index.ts"));
-    }
-    let mut child = cmd
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mqtt-to-meshcoreio-map"))
         .current_dir(dir.path())
         .env_remove("SOURCE_MQTT_URL")
         .env_remove("MESHCOREIO_API_URL")
@@ -106,9 +102,9 @@ async fn exchange(binary: &str, vector: &Value) -> Value {
 }
 
 #[tokio::test]
-async fn bun_and_rust_requests_match() {
+async fn mqtt_to_http_requests_match_reference_vectors() {
     let fixtures: Vec<Value> =
-        serde_json::from_str(include_str!("../../tests/runtime-golden.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/runtime-golden.json")).unwrap();
     let mut cases: Vec<Value> = fixtures
         .into_iter()
         .filter(|v| v["request"].is_object())
@@ -118,10 +114,169 @@ async fn bun_and_rust_requests_match() {
     large["padding"] = "x".repeat(12_000).into();
     cases.push(large);
     for vector in &cases {
-        let bun = exchange("bun", vector).await;
-        let rust = exchange(env!("CARGO_BIN_EXE_mqtt-to-meshcoreio-map"), vector).await;
-        assert_eq!(bun, rust, "{}", vector["name"]);
+        let request = exchange(vector).await;
+        assert_eq!(request, vector["request"], "{}", vector["name"]);
     }
+}
+
+#[tokio::test]
+async fn rejected_packets_never_reach_http() {
+    let fixtures: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/runtime-golden.json")).unwrap();
+    for vector in fixtures.iter().filter(|v| v["request"].is_null()) {
+        let broker = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            format!(
+                "SOURCE_MQTT_URL=mqtt://{}\nMESHCOREIO_API_URL=http://{}\nMESHCOREIO_PRIVATE_KEY={}\nLOG_COLOR=false\n",
+                broker.local_addr().unwrap(),
+                api.local_addr().unwrap(),
+                "01".repeat(32)
+            ),
+        )
+        .unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_mqtt-to-meshcoreio-map"))
+            .current_dir(dir.path())
+            .env_remove("SOURCE_MQTT_URL")
+            .env_remove("MESHCOREIO_API_URL")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let result = timeout(Duration::from_secs(5), async {
+            let (mut mqtt, _) = broker.accept().await.unwrap();
+            mqtt_frame(&mut mqtt).await;
+            mqtt.write_all(&[0x20, 2, 0, 0]).await.unwrap();
+            let (_, subscribe) = mqtt_frame(&mut mqtt).await;
+            mqtt.write_all(&[0x90, 3, subscribe[0], subscribe[1], 0])
+                .await
+                .unwrap();
+            let topic = vector["topic"].as_str().unwrap();
+            publish(
+                &mut mqtt,
+                &format!("{topic}/status"),
+                vector["status"].as_str().unwrap().as_bytes(),
+            )
+            .await;
+            let packet = json!({"origin_id": "a1".repeat(32), "raw": vector["packet"]});
+            publish(
+                &mut mqtt,
+                &format!("{topic}/packets"),
+                packet.to_string().as_bytes(),
+            )
+            .await;
+            assert!(
+                timeout(Duration::from_millis(300), api.accept())
+                    .await
+                    .is_err(),
+                "{} unexpectedly sent an HTTP request",
+                vector["name"]
+            );
+            // A subsequent valid advert on the same connection must be the
+            // first request; a delayed invalid job would change its body.
+            let valid = &fixtures[0];
+            publish(
+                &mut mqtt,
+                &format!("{topic}/status"),
+                valid["status"].as_str().unwrap().as_bytes(),
+            )
+            .await;
+            let packet = json!({"origin_id": "a1".repeat(32), "raw": valid["packet"]});
+            publish(
+                &mut mqtt,
+                &format!("{topic}/packets"),
+                packet.to_string().as_bytes(),
+            )
+            .await;
+            let (mut conn, _) = timeout(Duration::from_secs(2), api.accept())
+                .await
+                .expect("valid advert did not reach HTTP")
+                .unwrap();
+            let mut request = Vec::new();
+            let (body_start, body_len) = loop {
+                let mut chunk = [0; 4096];
+                let n = conn.read(&mut chunk).await.unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&chunk[..n]);
+                if let Some(end) = request.windows(4).position(|s| s == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                    let length = headers.lines().find_map(|line| line.strip_prefix("content-length: ")?.trim().parse::<usize>().ok()).unwrap();
+                    break (end + 4, length);
+                }
+            };
+            while request.len() < body_start + body_len {
+                let mut chunk = [0; 4096];
+                let n = conn.read(&mut chunk).await.unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&chunk[..n]);
+            }
+            let body: Value = serde_json::from_slice(&request[body_start..body_start + body_len]).unwrap();
+            assert_eq!(body, valid["request"], "{} sent wrong request", vector["name"]);
+            conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 25\r\nConnection: close\r\n\r\n{\"code\":\"NODES_INSERTED\"}").await.unwrap();
+            assert!(timeout(Duration::from_millis(100), api.accept()).await.is_err());
+        })
+        .await;
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+        result.expect("rejected packet check timed out");
+    }
+}
+
+#[tokio::test]
+async fn config_check_never_connects_or_logs_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    let secret = "local-test-password";
+    std::fs::write(
+        dir.path().join(".env"),
+        format!(
+            "SOURCE_MQTT_URL=mqtt://127.0.0.1:9\nSOURCE_MQTT_PASSWORD={secret}\nLOG_COLOR=false\n"
+        ),
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_mqtt-to-meshcoreio-map"))
+        .arg("--check-config")
+        .current_dir(dir.path())
+        .env_remove("SOURCE_MQTT_URL")
+        .env_remove("SOURCE_MQTT_PASSWORD")
+        .output()
+        .await
+        .unwrap();
+    assert!(result.status.success());
+    assert!(String::from_utf8_lossy(&result.stdout).contains("Configuration OK (1 MQTT sources)"));
+    assert!(!String::from_utf8_lossy(&result.stdout).contains(secret));
+    assert!(!String::from_utf8_lossy(&result.stderr).contains(secret));
+    std::fs::write(
+        dir.path().join(".env"),
+        "SOURCE_MQTT_URL=ftp://example.test\n",
+    )
+    .unwrap();
+    let invalid = Command::new(env!("CARGO_BIN_EXE_mqtt-to-meshcoreio-map"))
+        .arg("--check-config")
+        .current_dir(dir.path())
+        .env_remove("SOURCE_MQTT_URL")
+        .output()
+        .await
+        .unwrap();
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("unsupported scheme"));
+    std::fs::write(
+        dir.path().join(".env"),
+        "MESHCOREIO_API_URL=ftp://example.test/private-token\n",
+    )
+    .unwrap();
+    let invalid_api = Command::new(env!("CARGO_BIN_EXE_mqtt-to-meshcoreio-map"))
+        .arg("--check-config")
+        .current_dir(dir.path())
+        .env_remove("MESHCOREIO_API_URL")
+        .output()
+        .await
+        .unwrap();
+    assert!(!invalid_api.status.success());
+    let error = String::from_utf8_lossy(&invalid_api.stderr);
+    assert!(error.contains("expected an HTTP(S) endpoint"));
+    assert!(!error.contains("private-token"));
 }
 
 #[tokio::test]
@@ -133,25 +288,16 @@ async fn invalid_signing_seed_does_not_leak() {
         format!("MESHCOREIO_PRIVATE_KEY={secret}\nLOG_COLOR=false\n"),
     )
     .unwrap();
-    for (binary, args) in [
-        (
-            "bun",
-            vec![concat!(env!("CARGO_MANIFEST_DIR"), "/../src/index.ts")],
-        ),
-        (env!("CARGO_BIN_EXE_mqtt-to-meshcoreio-map"), vec![]),
-    ] {
-        let result = Command::new(binary)
-            .args(args)
-            .current_dir(dir.path())
-            .env_remove("MESHCOREIO_PRIVATE_KEY")
-            .output()
-            .await
-            .unwrap();
-        assert!(!result.status.success());
-        let error = String::from_utf8_lossy(&result.stderr);
-        assert!(error.contains("MESHCOREIO_PRIVATE_KEY is invalid"));
-        assert!(!error.contains(secret));
-    }
+    let result = Command::new(env!("CARGO_BIN_EXE_mqtt-to-meshcoreio-map"))
+        .current_dir(dir.path())
+        .env_remove("MESHCOREIO_PRIVATE_KEY")
+        .output()
+        .await
+        .unwrap();
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("MESHCOREIO_PRIVATE_KEY is invalid"));
+    assert!(!error.contains(secret));
 }
 
 #[tokio::test]

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 fn job() -> Job {
     let vector: Vec<Value> =
-        serde_json::from_str(include_str!("../../tests/runtime-golden.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/runtime-golden.json")).unwrap();
     let input = &vector[0];
     let mut reader = Reader::new(&resolve(&Default::default()).map_uploader);
     let topic = input["topic"].as_str().unwrap();
@@ -84,7 +84,7 @@ fn retry_returns_to_back_of_waiting_jobs() {
 #[test]
 fn a_full_queue_does_not_start_advert_cooldown() {
     let vector: Vec<Value> =
-        serde_json::from_str(include_str!("../../tests/runtime-golden.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/runtime-golden.json")).unwrap();
     let input = &vector[0];
     let topic = input["topic"].as_str().unwrap();
     let mut reader = Reader::new(&resolve(&Default::default()).map_uploader);

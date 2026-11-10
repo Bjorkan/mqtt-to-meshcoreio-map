@@ -15,9 +15,9 @@ struct Fixture {
 }
 
 #[test]
-fn matches_original_typescript_resolver() {
+fn matches_reference_configuration_vectors() {
     let fixtures: Vec<Fixture> =
-        serde_json::from_str(include_str!("../../tests/config-golden.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/config-golden.json")).unwrap();
     for fixture in fixtures {
         assert_eq!(
             serde_json::to_value(resolve(&fixture.env)).unwrap(),
@@ -78,7 +78,7 @@ fn dotenv_parses_existing_example_and_compose_override() {
 }
 
 #[test]
-fn dotenv_preserves_bun_quote_comment_and_expansion_behavior() {
+fn dotenv_preserves_quote_comment_and_expansion_behavior() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join(".env"),
@@ -92,7 +92,7 @@ fn dotenv_preserves_bun_quote_comment_and_expansion_behavior() {
 }
 
 #[test]
-fn dotenv_expands_after_all_files_and_keeps_bun_values() {
+fn dotenv_expands_after_all_files() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join(".env"), "PARITY_FORWARD=mqtt://$PARITY_BROKER:1883\nPARITY_LATER=$PARITY_CROSS\nPARITY_NAME=Primary Broker\nPARITY_PASSWORD=two words\nPARITY_BACKTICK=`Primary Broker`\nPARITY_FALLBACK=${PARITY_MISSING:-localhost}\nPARITY_TOPIC=meshcore/#\nPARITY_EMPTY=\nPARITY_EMPTY_FALLBACK=${PARITY_EMPTY:-default}\nPARITY_CYCLE=$PARITY_CYCLE\nPARITY_NESTED=${PARITY_MISSING:-${PARITY_BROKER}}\nPARITY_INVALID=${PARITY_MISSING-default}\nPARITY_UNTERMINATED=${PARITY_BROKER\nPARITY_COLON: colon value\nPARITY_COLON_EQUALS: value=present\nPARITY_ESCAPED=\"first\\nsecond\"\nPARITY_SLASH=\"first\\\\nsecond\"\n").unwrap();
     let mode = std::env::var("NODE_ENV").unwrap_or_else(|_| "development".into());
@@ -120,26 +120,8 @@ fn dotenv_expands_after_all_files_and_keeps_bun_values() {
         ("PARITY_ESCAPED", "first\nsecond"),
         ("PARITY_SLASH", "first\\\\nsecond"),
     ];
-    let names = cases.iter().map(|(key, _)| *key).collect::<Vec<_>>();
-    let script = format!(
-        "console.log(JSON.stringify(Object.fromEntries({}.map(k => [k, process.env[k]]))))",
-        serde_json::to_string(&names).unwrap()
-    );
-    let bun = std::process::Command::new("bun")
-        .arg("-e")
-        .arg(script)
-        .current_dir(dir.path())
-        .output()
-        .expect("bun is needed for parity fixtures");
-    assert!(bun.status.success());
-    let baseline: serde_json::Value = serde_json::from_slice(&bun.stdout).unwrap();
     for (key, expected) in cases {
         assert_eq!(env.get(key).map(String::as_str), Some(expected), "{key}");
-        assert_eq!(
-            env.get(key).map(String::as_str),
-            baseline[key].as_str(),
-            "Bun: {key}"
-        );
     }
 }
 
@@ -163,7 +145,7 @@ fn unmatched_quote_does_not_consume_subsequent_assignment() {
 }
 
 #[test]
-fn bun_environment_files_keep_mode_and_local_precedence() {
+fn environment_files_keep_mode_and_local_precedence() {
     let dir = tempfile::tempdir().unwrap();
     let mode = std::env::var("NODE_ENV").unwrap_or_else(|_| "development".into());
     std::fs::write(dir.path().join(".env"), "SOURCE_MQTT_URL=mqtt://base\n").unwrap();
@@ -187,92 +169,17 @@ fn bun_environment_files_keep_mode_and_local_precedence() {
     assert_eq!(resolve(&read_environment(dir.path())).source_url, expected);
 }
 
-// Only compares configuration in memory: never starts MQTT, posts data, or
-// prints environment values (including credentials and signing seeds).
-fn compare_deployment(directory: &std::path::Path) {
-    assert!(
-        directory.join(".env").is_file(),
-        "production .env not found"
-    );
-    assert!(
-        directory.join("compose.yaml").is_file(),
-        "production compose.yaml not found"
-    );
-    let index = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/index.ts");
-    let script = format!(
-        "import {{ loadConfig }} from {}; console.log(JSON.stringify(loadConfig()));",
-        serde_json::to_string(&index.to_string_lossy()).unwrap()
-    );
-    let compare = |overrides: &HashMap<String, String>| {
-        let mut env = read_environment(directory);
-        env.extend(overrides.clone());
-        let config = serde_json::to_value(resolve(&env)).unwrap();
-        let bun = std::process::Command::new("bun")
-            .arg("-e")
-            .arg(&script)
-            .current_dir(directory)
-            .envs(overrides)
-            .output()
-            .unwrap();
-        assert!(
-            bun.status.success(),
-            "Bun could not resolve production configuration"
-        );
-        let baseline: serde_json::Value =
-            serde_json::from_slice(&bun.stdout).expect("Bun did not output JSON");
-        assert!(
-            config == baseline,
-            "production configuration differs (values withheld to protect credentials)"
-        );
-    };
-    compare(&HashMap::new());
-    let compose = std::process::Command::new("docker")
-        .args([
-            "compose",
-            "-f",
-            "compose.yaml",
-            "config",
-            "--format",
-            "json",
-        ])
-        .current_dir(directory)
-        .output()
-        .unwrap();
-    assert!(
-        compose.status.success(),
-        "could not resolve existing production Compose configuration"
-    );
-    let parsed: serde_json::Value =
-        serde_json::from_slice(&compose.stdout).expect("Compose did not output JSON");
-    let container_env: HashMap<String, String> =
-        parsed["services"]["mqtt-to-meshcoreio-map"]["environment"]
-            .as_object()
-            .expect("Compose service environment not found")
-            .iter()
-            .filter_map(|(key, value)| value.as_str().map(|v| (key.clone(), v.to_owned())))
-            .collect();
-    compare(&container_env);
-}
-
 #[test]
-fn unmodified_example_deployment_matches_bun() {
+fn unmodified_example_deployment_resolves() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::copy("../.env.example", directory.path().join(".env")).unwrap();
-    std::fs::copy(
-        "../compose.yaml.example",
-        directory.path().join("compose.yaml"),
-    )
-    .unwrap();
-    compare_deployment(directory.path());
-}
-
-// Run with PRODUCTION_ENV_DIR=/path/to/deployment and
-// cargo test --manifest-path rust/Cargo.toml --test golden -- --ignored.
-#[test]
-#[ignore = "requires the operator's existing production .env directory"]
-fn unmodified_production_env_matches_bun() {
-    let directory = std::path::PathBuf::from(
-        std::env::var("PRODUCTION_ENV_DIR").expect("set PRODUCTION_ENV_DIR"),
+    let env = read_environment(directory.path());
+    let config = resolve(&env);
+    assert_eq!(config.sources.len(), 1);
+    assert_eq!(config.map_uploader.max_queued_uploads, 25);
+    assert_eq!(
+        config.map_uploader.api_url,
+        "https://map.meshcore.io/api/v1/uploader/node"
     );
-    compare_deployment(&directory);
+    assert!(!config.map_uploader.dry_run);
 }

@@ -26,26 +26,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Check formatting
-        run: bun run format:check
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Run tests
-        run: bun test
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -55,7 +35,7 @@ jobs:
       - name: Lint Rust
         run: cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features --locked -- -D warnings
 
-      - name: Test Rust and Bun parity
+      - name: Test Rust
         run: cargo test --manifest-path rust/Cargo.toml --all-targets --locked
 
       - name: Build Rust release binary
@@ -95,8 +75,8 @@ jobs:
           docker logs "$container_id"
           exit 1
 
-      - name: Smoke test unchanged Compose example
-        run: bash tests/compose-smoke.sh mqtt-to-meshcoreio-map:smoke
+      - name: Smoke test Compose example
+        run: bash rust/tests/compose-smoke.sh mqtt-to-meshcoreio-map:smoke
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4

@@ -89,24 +89,26 @@ The queue is bounded and drains one job at a time. Full queues produce a warning
 
 ## For contributors
 
-The deployed application is a Rust binary in [`rust/`](rust/). The original Bun implementation in [`src/`](src/) remains as a compatibility baseline; [`tests/`](tests/) and [`rust/tests/`](rust/tests/) check behavior across both implementations. See [technical details](TECHNICAL.md) for the MQTT contract, signed request, and runtime flow.
+The application is a Rust binary in [`rust/`](rust/). [`rust/tests/`](rust/tests/) checks its protocol, configuration, queue, HTTP behavior, and local end-to-end flow. See [technical details](TECHNICAL.md) for the MQTT contract, signed request, and runtime flow.
 
 ```bash
-bun install --frozen-lockfile
-bun run typecheck && bun test && bun run lint && bun run format:check
 cargo fmt --manifest-path rust/Cargo.toml --check
 cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features --locked -- -D warnings
 cargo test --manifest-path rust/Cargo.toml --all-targets --locked
 docker build -t mqtt-to-meshcoreio-map .
 ```
 
-Before a production cutover, compare the real, unmodified `.env` and `compose.yaml` against the Bun configuration without printing secrets:
+Before a production rollout, validate your unmodified Compose configuration and the bridge's effective settings **without connecting to MQTT or MeshCore.io**, then test with dry run enabled:
 
 ```bash
-PRODUCTION_ENV_DIR=/path/to/deployment \
-  cargo test --manifest-path rust/Cargo.toml --test golden -- --ignored
+docker compose config --quiet
+docker compose run --rm --no-deps mqtt-to-meshcoreio-map \
+  /app/mqtt-to-meshcoreio-map --check-config
+# Set MESHCOREIO_DRY_RUN=true in .env before starting the service.
+docker compose up -d
+docker compose logs -f
 ```
 
-Run a staging dry run against the actual broker before enabling uploads. The historical Bun container can be built with `docker build -f Dockerfile.bun .` for comparison.
+Run a staging dry run against the actual broker before enabling uploads. Keep real credentials out of version control.
 
 > **Disclaimer:** This project was built with extensive AI assistance (GPT-5.5). Review it and use it at your own risk; human-written forks and rewrites are welcome.

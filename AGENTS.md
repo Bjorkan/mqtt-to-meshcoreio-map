@@ -1,24 +1,17 @@
 # Repository guide for coding agents
 
-This is an MQTT-to-MeshCore.io map bridge. The production service is Rust (`rust/`); the Bun service (`src/`) is retained as a behavioral baseline, not a second production deployment. Read the nearest nested `AGENTS.md` before editing a module. Keep documentation, comments, tests, commit messages, and user-facing text in English.
+This is a Rust MQTT-to-MeshCore.io map bridge. Read the nearest nested `AGENTS.md` before editing a module. Keep documentation, comments, tests, commit messages, and user-facing text in English.
 
 ## Where to work
 
 - `rust/AGENTS.md`: Rust crate, build, and compatibility constraints.
 - `rust/src/AGENTS.md`: production protocol, reader, queue, uploader, and MQTT runtime.
-- `rust/tests/AGENTS.md`: Rust integration and parity tests.
-- `src/AGENTS.md`: retained Bun baseline and its test-facing contracts.
-- `tests/AGENTS.md`: Bun tests, golden fixture generators, and Compose smoke test.
+- `rust/tests/AGENTS.md`: Rust integration tests, reference vectors, and Compose smoke test.
 - `README.md`: user setup and operation; `TECHNICAL.md`: wire formats and implementation details. Keep both accurate when behavior changes.
 
 ## Checks from the repository root
 
 ```bash
-bun install --frozen-lockfile
-bun run typecheck
-bun test
-bun run lint
-bun run format:check
 cargo fmt --manifest-path rust/Cargo.toml --check
 cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features --locked -- -D warnings
 cargo test --manifest-path rust/Cargo.toml --all-targets --locked
@@ -34,7 +27,7 @@ Run all checks before publishing meaningful runtime changes. CI also builds an A
 - Only verified `REPEATER`, `ROOM`, and `SENSOR` adverts can be uploaded. The latest valid observer radio status expires after 24 hours.
 - One sequential upload queue, with bounded waiting capacity (`MESHCOREIO_MAX_QUEUED_UPLOADS`) and a 5-second delay between jobs. Do not add parallel HTTP uploads or unbounded verification work.
 - Keep advert drops and retries silent except for full-queue warnings and one warning on exhausted attempts. Log one outcome per MeshCore.io exchange.
-- Changes to configuration or signing must preserve Bun parity fixtures unless a deliberate, documented compatibility change is required.
+- Changes to configuration, protocol, or signing must preserve the checked-in reference vectors unless a deliberate, documented contract change is required.
 
 ## References and review
 

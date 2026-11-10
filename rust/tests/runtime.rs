@@ -16,9 +16,9 @@ struct Vector {
 }
 
 #[test]
-fn bun_verified_packet_and_request_vectors() {
+fn verified_packet_and_request_vectors() {
     let vectors: Vec<Vector> =
-        serde_json::from_str(include_str!("../../tests/runtime-golden.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/runtime-golden.json")).unwrap();
     let config = resolve(&HashMap::new());
     let signing = SigningKey::from_bytes(&[1; 32]);
     for vector in vectors {
@@ -99,7 +99,7 @@ fn bun_verified_packet_and_request_vectors() {
 #[test]
 fn prefixed_numeric_status_fields_allow_verified_adverts() {
     let vectors: Vec<Vector> =
-        serde_json::from_str(include_str!("../../tests/runtime-golden.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/runtime-golden.json")).unwrap();
     let packet = &vectors[0].packet;
     let config = resolve(&HashMap::new());
     let cases = [

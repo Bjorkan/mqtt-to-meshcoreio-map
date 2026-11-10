@@ -1,5 +1,5 @@
 //! One active upload and a bounded number of waiting jobs. The active job is
-//! not included in the configured queue capacity, matching the Bun queue.
+//! not included in the configured waiting queue capacity.
 use crate::reader::Job;
 use std::collections::{HashSet, VecDeque};
 

@@ -1,5 +1,4 @@
 node_modules
 rust/target
-npm-debug.log
 .git
 .env

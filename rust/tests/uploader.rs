@@ -8,7 +8,7 @@ use tokio::net::TcpListener;
 
 fn sample() -> (mqtt_to_meshcoreio_map::reader::Job, Value) {
     let vectors: Vec<Value> =
-        serde_json::from_str(include_str!("../../tests/runtime-golden.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/runtime-golden.json")).unwrap();
     let v = &vectors[0];
     let mut reader = Reader::new(&resolve(&Default::default()).map_uploader);
     let topic = v["topic"].as_str().unwrap();
@@ -29,7 +29,7 @@ fn sample() -> (mqtt_to_meshcoreio_map::reader::Job, Value) {
 }
 
 #[test]
-fn bun_signed_request_matches_byte_for_byte() {
+fn signed_request_matches_reference_bytes() {
     let (job, expected) = sample();
     let env = HashMap::from([("MESHCOREIO_PRIVATE_KEY".to_owned(), "01".repeat(32))]);
     let uploader = Uploader::new(resolve(&env).map_uploader, &env).unwrap();

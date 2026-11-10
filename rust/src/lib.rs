@@ -1,5 +1,4 @@
-//! Compatibility configuration for the existing Bun bridge. Keep the public
-//! environment contract in sync with src/index.ts and src/map-log.ts.
+//! Environment configuration for the MQTT-to-MeshCore.io bridge.
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -52,8 +51,8 @@ pub struct Config {
 }
 
 pub fn read_environment(directory: &Path) -> HashMap<String, String> {
-    // Bun loads .env, the NODE_ENV-specific file, and .env.local (except
-    // under NODE_ENV=test). Exported variables take precedence over all files.
+    // Preserve mode-specific .env loading, including .env.local except under
+    // NODE_ENV=test. Exported variables take precedence over all files.
     // Missing files are normal (e.g. Compose env_file).
     let mode = std::env::var("NODE_ENV").unwrap_or_else(|_| "development".into());
     let mut files = vec![".env".to_owned(), format!(".env.{mode}")];
@@ -67,7 +66,7 @@ pub fn read_environment(directory: &Path) -> HashMap<String, String> {
             parse_env_file(&contents, &mut raw);
         }
     }
-    // Bun merges all files and process variables before expanding references.
+    // Merge all files and process variables before expanding references.
     let mut expanded: HashMap<String, String> = std::env::vars().collect();
     raw.extend(expanded.clone());
     let mut keys = raw.keys().collect::<Vec<_>>();
@@ -117,8 +116,7 @@ fn parse_env_file(contents: &str, values: &mut HashMap<String, String>) {
                     })
                     .map(|(i, _)| i)
             };
-            // If no closing quote exists in the file, Bun keeps the opening
-            // quote as text and continues parsing the next assignment.
+            // An unclosed quote is kept as text without consuming the next assignment.
             let mut probe = lines.clone();
             let mut has_closing = closing(&body).is_some();
             while !has_closing {

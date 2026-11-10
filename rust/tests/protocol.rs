@@ -16,9 +16,9 @@ struct Expected {
 }
 
 #[test]
-fn bun_protocol_vectors() {
+fn reference_protocol_vectors() {
     let vectors: Vec<Vector> =
-        serde_json::from_str(include_str!("../../tests/protocol-golden.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/protocol-golden.json")).unwrap();
     for vector in vectors {
         let packet = hex::decode(&vector.hex).unwrap();
         let result = parse_verified_advert(&packet);
