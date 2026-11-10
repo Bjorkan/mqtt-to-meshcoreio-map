@@ -1,56 +1,44 @@
-# Agent Notes
+# Repository guide for coding agents
 
-This file is for future coding agents working on this repository.
+This is an MQTT-to-MeshCore.io map bridge. The production service is Rust (`rust/`); the Bun service (`src/`) is retained as a behavioral baseline, not a second production deployment. Read the nearest nested `AGENTS.md` before editing a module. Keep documentation, comments, tests, commit messages, and user-facing text in English.
 
-## Project Purpose
+## Where to work
 
-This project is an MQTT to MeshCore.io Map bridge. It listens to MeshCore observer messages from an MQTT broker, keeps the latest valid observer radio status, verifies MeshCore adverts, and uploads accepted `REPEATER`, `ROOM`, and `SENSOR` adverts to the MeshCore.io map.
+- `rust/AGENTS.md`: Rust crate, build, and compatibility constraints.
+- `rust/src/AGENTS.md`: production protocol, reader, queue, uploader, and MQTT runtime.
+- `rust/tests/AGENTS.md`: Rust integration and parity tests.
+- `src/AGENTS.md`: retained Bun baseline and its test-facing contracts.
+- `tests/AGENTS.md`: Bun tests, golden fixture generators, and Compose smoke test.
+- `README.md`: user setup and operation; `TECHNICAL.md`: wire formats and implementation details. Keep both accurate when behavior changes.
 
-Keep documentation, comments, tests, commit messages, and user-facing project text in English.
-
-## Useful Local Commands
+## Checks from the repository root
 
 ```bash
+bun install --frozen-lockfile
 bun run typecheck
 bun test
 bun run lint
 bun run format:check
+cargo fmt --manifest-path rust/Cargo.toml --check
+cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features --locked -- -D warnings
+cargo test --manifest-path rust/Cargo.toml --all-targets --locked
 docker build -t mqtt-to-meshcoreio-map .
 ```
 
-Run all of them before publishing meaningful runtime changes.
+Run all checks before publishing meaningful runtime changes. CI also builds an ARM64 image. Never run test traffic against the real MeshCore.io endpoint: use `MESHCOREIO_DRY_RUN=true` or a local HTTP fixture.
 
-## Important References
+## Invariants
 
-- [recrof/map.meshcore.io-uploader](https://github.com/recrof/map.meshcore.io-uploader)
+- No dashboard, HTTP server, database, or writable volume. Observer status, deduplication, queue, and retry state are in memory.
+- One signing identity per start, optionally fixed with `MESHCOREIO_PRIVATE_KEY`. Never log private seeds, unredacted MQTT credentials, or token-bearing URLs; logging the derived public key is expected.
+- Only verified `REPEATER`, `ROOM`, and `SENSOR` adverts can be uploaded. The latest valid observer radio status expires after 24 hours.
+- One sequential upload queue, with bounded waiting capacity (`MESHCOREIO_MAX_QUEUED_UPLOADS`) and a 5-second delay between jobs. Do not add parallel HTTP uploads or unbounded verification work.
+- Keep advert drops and retries silent except for full-queue warnings and one warning on exhausted attempts. Log one outcome per MeshCore.io exchange.
+- Changes to configuration or signing must preserve Bun parity fixtures unless a deliberate, documented compatibility change is required.
 
-  Map uploader from the MeshCore.io map developer. It is aimed at a setup where someone has a MeshCore companion connected over USB, so the runtime model is different from this MQTT bridge. The MeshCore.io API usage, request signing, and accepted upload shape can still be useful reference material.
+## References and review
 
-- [agessaman/MeshCore mqtt-bridge-implementation-flex branch](https://github.com/agessaman/MeshCore/tree/mqtt-bridge-implementation-flex)
-
-  This branch contains MQTT observer firmware for nodes reporting to MQTT servers. It is useful when checking how MQTT observer status and packet messages will probably be formatted in real deployments.
-
-## Documentation Split
-
-- `README.md` should stay focused on project overview, deployment, configuration, and quick development commands.
-- `TECHNICAL.md` should hold under-the-hood details such as MQTT message contracts, MeshCore.io request format, signing behavior, and conversion flow.
-
-## Runtime Notes
-
-- The service is fully in-memory: observer radio statuses, dedup caches, queue and retry state do not survive restarts. There is no database and no writable volume requirement.
-- There is no web dashboard; the service exposes no HTTP endpoints at all.
-- One MeshCore.io identity signs every upload. It is ephemeral per start unless `MESHCOREIO_PRIVATE_KEY` provides a fixed ed25519 seed (validated with a signature self-test at startup). Never log the private value; logging the derived public key is expected.
-- A single sequential upload queue drains itself one job at a time with a 5 second pacing delay between uploads. Do not reintroduce parallel posters or worker terminology.
-- The advert pipeline logs exactly one line per meshcore.io exchange (`sent to meshcore.io: <CODE>`), stays silent about drops and retries, and emits a single warning when a job exhausts its retries. Keep it that way.
-- The observer cache keeps only the latest valid radio status per observer and drops status older than 24 hours.
-- Upload queue capacity is bounded by `MESHCOREIO_MAX_QUEUED_UPLOADS`. Avoid changes that can create unbounded queues or HTTP uploads.
-
-## Reviewer
-
-There is a `critical-reviewer` subagent at `.opencode/agents/critical-reviewer.md`.
-Invoke it before every commit to catch bugs, type errors, and logic flaws.
-
-- Do not log private keys or unredacted MQTT credentials.
-- The upload identity is generated fresh at startup. Logging the public key is expected; logging the private key is not.
-- The observer cache should keep only the latest valid radio status per observer and drop status older than 24 hours.
-- Upload concurrency and queue behavior are deliberately bounded. Avoid changes that can create unbounded parallel verification or HTTP uploads.
+- [Map uploader reference](https://github.com/recrof/map.meshcore.io-uploader) documents the API and signing, but connects to a USB companion rather than MQTT.
+- [MeshCore observer firmware branch](https://github.com/agessaman/MeshCore/tree/mqtt-bridge-implementation-flex) helps check observer payload formats.
+- [MeshCore MQTT broker](https://github.com/michaelhart/meshcore-mqtt-broker) is WebSocket-based; use local credentials and dry run for integration checks.
+- Invoke `.opencode/agents/critical-reviewer.md` before **every commit** to catch bugs, type errors, and logical mistakes.

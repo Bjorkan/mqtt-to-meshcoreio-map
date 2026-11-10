@@ -115,47 +115,11 @@ The request body is signed and has this shape:
 
 ## Runtime Responsibilities
 
-The runtime is divided into three responsibilities:
+The production Rust service separates message processing into three components:
 
-1. MQTT broker reader
-
-   The reader owns the MQTT message contract. It stores valid observer radio status, extracts packet bytes from `raw` and `packets` messages, parses and verifies MeshCore adverts, drops non-uploadable advert types, and deduplicates adverts already handled for a node within the configured reupload interval. It emits a compact JSON-serializable work request containing normalized observer radio params, the raw packet link source, advert identity, and log labels.
-
-   Example queue work request:
-
-   ```json
-   {
-     "requestId": "f8d0f0fb-783c-4a2e-b0c4-22a86b22b43b",
-     "retriesAllowed": 3,
-     "advertKey": "a09aa5...:1800091500",
-     "advertTimestamp": 1800091500,
-     "advertType": "REPEATER",
-     "nodeName": "SE-STO-TEST",
-     "nodePublicKey": "a09aa5...",
-     "rawPacketHex": "0100...",
-     "observerId": "a1a1a1...",
-     "observerName": "SE-STO-OBSERVER",
-     "radioParams": {
-       "freq": 869.618,
-       "bw": 62.5,
-       "sf": 8,
-       "cr": 8
-     },
-     "logContext": {
-       "advertLabel": "SE-STO-TEST (a09aa5)"
-     }
-   }
-   ```
-
-2. Posting queue
-
-   The queue receives work requests from the reader. It keeps at most one queued or active advert per advertised node and enforces `MESHCOREIO_MAX_QUEUED_UPLOADS`. Registering work is silent; when the queue is full, a warning is logged and the request is dropped.
-
-   Connection and non-terminal upload failures are placed at the back of the queue with `retriesAllowed` reduced by one, without logging. When the retry budget reaches zero, exactly one warning is logged (`Advert <label> dropped after N attempts: <reason>`) and the request is dropped.
-
-3. MeshCore.io poster
-
-   The poster drains the queue sequentially: one upload at a time, with a 5 second pacing delay between uploads while more work is pending. It converts the plain queue work request into MeshCore.io's signed request format, sends it to the configured API URL, and classifies responses. With `MESHCOREIO_DRY_RUN=true`, the poster stops after conversion/signing and marks the work handled without making the HTTP request. Inserted, duplicate, and coordinates-missing responses are considered handled from this bridge's perspective. Connection failures and non-terminal HTTP/server errors are returned to the queue for retry.
+1. **Reader (`rust/src/reader.rs`, `rust/src/protocol.rs`).** Valid observer radio status is cached by observer public key. Packet messages supply the original wire bytes; the native parser verifies an advert's signature and accepts only uploadable types. The reader constructs a `Job` with node key, advert timestamp, original packet hex, normalized radio parameters, attempt budget, and sanitized log label. It suppresses handled replays and recent accepted adverts.
+2. **Queue (`rust/src/queue.rs`).** At most one job for a node may be waiting or active. `MESHCOREIO_MAX_QUEUED_UPLOADS` bounds waiting jobs, excluding the one active job. A failed attempt goes to the back of the waiting queue if capacity remains; retry exhaustion emits one warning and drops the job. A full queue drops new jobs (and retries when applicable) with a warning.
+3. **Service and uploader (`rust/src/service.rs`, `rust/src/uploader.rs`).** One service loop owns the reader and queue, starts at most one HTTP request, and waits 5 seconds between uploads while work remains. The uploader signs the exact JSON `data` string, posts it with a full-request timeout and bounded response body, and classifies terminal responses. With `MESHCOREIO_DRY_RUN=true`, it marks the job handled without making an HTTP request.
 
 ## Logging
 
@@ -175,10 +139,10 @@ Everything else in the pipeline is silent: dropped adverts (wrong type, bad sign
 2. For every MQTT message, inspect the topic to decide whether it is `status`, `raw`, or `packets`.
 3. Store valid `status` radio parameters by observer public key.
 4. Extract packet hex from `raw` or `packets` payloads and find the observer public key from `origin_id` or the topic.
-5. Parse the packet with `Packet.fromBytes(...)`.
+5. Parse the MeshCore packet wire bytes with the native Rust protocol parser.
 6. Continue only if the packet payload is a MeshCore `ADVERT`.
 7. Parse the advert, verify its signature, and keep only `REPEATER`, `ROOM`, and `SENSOR` adverts.
-8. Format eligible adverts as queue work requests with normalized observer radio parameters and the original packet bytes.
+8. Build eligible advert jobs with normalized observer radio parameters and the original packet bytes.
 9. Put work requests through a bounded global posting queue.
 10. Skip stale adverts, duplicate queued or in-flight nodes, too-frequent reuploads, and adverts without complete valid radio parameters.
 11. Build MeshCore.io upload data with normalized radio params and a `meshcore://...` link containing the original packet bytes.
