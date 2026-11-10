@@ -15,25 +15,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path rust/Cargo.toml --check
 
-      - name: Lint
-        run: bun run lint
+      - name: Lint Rust
+        run: cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features --locked -- -D warnings
 
-      - name: Check formatting
-        run: bun run format:check
+      - name: Test Rust
+        run: cargo test --manifest-path rust/Cargo.toml --all-targets --locked
 
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Run tests
-        run: bun test
+      - name: Build release binary
+        run: cargo build --manifest-path rust/Cargo.toml --release --locked
 
   docker:
     name: Docker build
@@ -43,6 +38,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -55,14 +53,43 @@ jobs:
           load: true
           tags: mqtt-to-meshcoreio-map:ci
 
+      - name: Build ARM64 production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: mqtt-to-meshcoreio-map:arm64-ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test ARM64 image under QEMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id="$(docker run -d --platform linux/arm64 \
+            -e SOURCE_MQTT_URL=mqtt://127.0.0.1:9 \
+            mqtt-to-meshcoreio-map:arm64-ci)"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          for _ in {1..30}; do
+            if docker logs "$container_id" 2>&1 | grep -Eq 'upload public key [0-9a-f]{64}' \
+              && [ "$(docker inspect -f '{{.State.Running}}' "$container_id")" = "true" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$container_id"
+          exit 1
+
       - name: Smoke test image
         shell: bash
         run: |
           set -euo pipefail
-          container_id="$(docker run -d --rm \
+          container_id="$(docker run -d \
             -e SOURCE_MQTT_URL=mqtt://127.0.0.1:9 \
             mqtt-to-meshcoreio-map:ci)"
-          trap 'docker stop "$container_id" >/dev/null' EXIT
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
 
           for _ in {1..30}; do
             if docker logs "$container_id" 2>&1 | grep -Eq 'upload public key [0-9a-f]{64}' \
@@ -74,3 +101,6 @@ jobs:
 
           docker logs "$container_id"
           exit 1
+
+      - name: Smoke test Compose example
+        run: bash rust/tests/compose-smoke.sh mqtt-to-meshcoreio-map:ci

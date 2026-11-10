@@ -1,0 +1,30 @@
+# Rust service
+
+This crate is the production MQTT-to-MeshCore.io bridge. Its executable reads MQTT observer messages, verifies eligible adverts, and posts signed, paced uploads to the map. It needs an existing MQTT broker; it does not expose an HTTP service or persist state.
+
+## Run locally
+
+From the repository root, configure `.env` as described in the [main README](../README.md), then run:
+
+```bash
+cargo run --manifest-path rust/Cargo.toml
+```
+
+To inspect real broker traffic without uploading anything, set `MESHCOREIO_DRY_RUN=true` first. For a packaged deployment, use the repository's `Dockerfile` and `compose.yaml.example`.
+
+Run `cargo run --manifest-path rust/Cargo.toml -- --check-config` to validate effective settings without opening a network connection or printing credentials.
+
+## Inside the crate
+
+- [`src/`](src/): environment configuration, MQTT connections, advert processing, bounded queue, and signed HTTP uploads.
+- [`tests/`](tests/): protocol vectors, queue and HTTP behavior, and local end-to-end checks.
+
+## Validate
+
+```bash
+cargo fmt --manifest-path rust/Cargo.toml --check
+cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features --locked -- -D warnings
+cargo test --manifest-path rust/Cargo.toml --all-targets --locked
+```
+
+Tests use checked-in reference vectors and loopback peers; no JavaScript runtime is required. See [technical details](../TECHNICAL.md) for supported messages and the signed map request.
