@@ -157,6 +157,11 @@ fn safe_url(raw: &str) -> String {
     if url.password().is_some() {
         let _ = url.set_password(Some("redacted"));
     }
+    // WebSocket endpoints may put bearer tokens in the path, not just in
+    // userinfo or the query string. Do not print any endpoint path in logs.
+    if url.path() != "/" {
+        url.set_path("/[redacted]");
+    }
     // MQTT URLs may carry credentials in query parameters as well.
     url.set_query(None);
     url.set_fragment(None);
@@ -583,7 +588,11 @@ mod tests {
         assert!(matches!(options.transport(), Transport::Wss(_)));
         assert_eq!(
             safe_url(&source.url),
-            "wss://redacted:redacted@example.test:8084/mqtt"
+            "wss://redacted:redacted@example.test:8084/[redacted]"
+        );
+        assert_eq!(
+            safe_url("wss://example.test/private-token?access_token=secret#fragment"),
+            "wss://example.test/[redacted]"
         );
         source.url = "mqtts://example.test:8883".into();
         source.reject_unauthorized = true;
