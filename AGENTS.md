@@ -18,7 +18,7 @@ cargo test --manifest-path rust/Cargo.toml --all-targets --locked
 docker build -t mqtt-to-meshcoreio-map .
 ```
 
-Run all checks before publishing meaningful runtime changes. CI also builds an ARM64 image. Never run test traffic against the real MeshCore.io endpoint: use `MESHCOREIO_DRY_RUN=true` or a local HTTP fixture.
+Run all checks before publishing meaningful runtime changes. CI builds and smoke-tests only Linux AMD64 images. Never run test traffic against the real MeshCore.io endpoint: use `MESHCOREIO_DRY_RUN=true` or a local HTTP fixture.
 
 ## Invariants
 

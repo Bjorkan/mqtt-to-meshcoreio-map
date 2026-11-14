@@ -31,6 +31,8 @@ This bridge subscribes to an existing MQTT broker, pairs observer radio status w
    docker compose logs -f
    ```
 
+Container images are supported only on Linux AMD64 (`linux/amd64`); ARM64 is not supported.
+
 The example uses `ghcr.io/bjorkan/mqtt-to-meshcoreio-map:latest`. It needs no inbound ports or writable volume. Docker Hub users can substitute `bjorkan/mqtt-to-meshcoreio-map:latest`. The `latest` tag follows published releases; `edge` follows `main` and may be less stable.
 
 > **Test safely:** Set `MESHCOREIO_DRY_RUN=true` in `.env` while checking a new broker. The bridge will read and verify adverts but will **not** send requests to MeshCore.io. Switch it back to `false` only when you're ready to upload real observations.
