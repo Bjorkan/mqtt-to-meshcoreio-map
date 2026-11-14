@@ -35,8 +35,15 @@
       "matchUpdateTypes": [
         "lockFileMaintenance"
       ],
-      "minimumReleaseAge": null
+      "minimumReleaseAge": null,
+      "prCreation": "immediate"
     }
   ],
-  "minimumReleaseAge": "14 days"
+  "minimumReleaseAge": "14 days",
+  "automerge": true,
+  "automergeType": "pr",
+  "platformAutomerge": true,
+  "prCreation": "not-pending",
+  "internalChecksFilter": "strict",
+  "internalChecksAsSuccess": true
 }
