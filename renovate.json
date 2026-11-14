@@ -29,6 +29,14 @@
         "patch"
       ],
       "groupName": "GitHub Actions updates"
+    },
+    {
+      "description": "Run lock file maintenance without a minimum release age",
+      "matchUpdateTypes": [
+        "lockFileMaintenance"
+      ],
+      "minimumReleaseAge": null
     }
-  ]
+  ],
+  "minimumReleaseAge": "14 days"
 }
