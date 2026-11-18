@@ -8,6 +8,10 @@ on:
     types:
       - published
 
+concurrency:
+  group: container-publish-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 permissions:
   contents: read
   packages: write
@@ -21,6 +25,7 @@ jobs:
   publish:
     name: Publish image
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
       - name: Check out repository
@@ -101,9 +106,11 @@ jobs:
           images: |
             ${{ steps.image.outputs.ghcr }}
             ${{ env.DOCKERHUB_IMAGE }}
+          flavor: |
+            latest=false
           tags: |
             type=raw,value=edge,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
             type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
             type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'release' }}
           labels: |
@@ -122,3 +129,5 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha,scope=publish-multiarch
+          cache-to: type=gha,scope=publish-multiarch,mode=max,ignore-error=true

@@ -3,6 +3,10 @@ name: PR CI
 on:
   pull_request:
 
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -10,6 +14,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -33,7 +38,7 @@ jobs:
   docker:
     name: Docker build
     runs-on: ubuntu-latest
-    needs: test
+    timeout-minutes: 90
 
     steps:
       - name: Check out repository
